@@ -1,0 +1,33 @@
+[Unit]
+Description=Wake-on-LAN REST API
+Documentation=https://github.com/your-org/ProxmoxInfra
+After=network.target zerotier-one.service
+Wants=zerotier-one.service
+
+[Service]
+Type=simple
+User=root
+# Full path to wol-api.py — update if this repo is cloned to a different location
+ExecStart=/usr/bin/python3 /home/pi/ProxmoxInfra/raspberry-pi/wake-on-lan/wol-api.py
+
+# Load API key and config path from environment file
+# Created by setup.sh — contains: API_KEY=<secret> and WOL_CONFIG=<path>
+EnvironmentFile=/etc/wol/wol-api.env
+
+# Restart on failure with a short delay
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security hardening (mild — root needed for etherwake fallback)
+PrivateTmp=true
+NoNewPrivileges=false
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wol-api
+
+[Install]
+WantedBy=multi-user.target

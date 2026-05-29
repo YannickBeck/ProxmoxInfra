@@ -1,0 +1,282 @@
+---
+# =======================================================================
+# SCCM Prerequisites Playbook
+# =======================================================================
+# Configures lab-sccm01 with all prerequisites required for SCCM
+# Current Branch installation.
+#
+# Prerequisites:
+#   - lab-dc01 is running and the lab.local domain is available
+#   - Windows Server 2022 is installed on lab-sccm01
+#   - WinRM is enabled on lab-sccm01
+#   - Inventory lab.yml is configured with SCCM VM credentials
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/sccm.yml
+#
+# IMPORTANT: This playbook installs SCCM prerequisites only.
+# After this playbook completes, you must manually:
+#   1. Install SQL Server 2019/2022
+#   2. Download Windows ADK + WinPE Add-on and install
+#   3. Download SCCM CB Evaluation and run Setup
+#   See infrastructure/vms/sccm/README.md for the full guide.
+# =======================================================================
+
+- name: Configure SCCM Prerequisites – lab-sccm01
+  hosts: sccm
+  gather_facts: false
+
+  vars:
+    sccm_script_src: "../../infrastructure/vms/sccm/powershell/setup-sccm-prereqs.ps1"
+    sccm_script_dest: "C:\\Windows\\Temp\\setup-sccm-prereqs.ps1"
+
+    # Domain join credential — prompt at runtime for security
+    # Or set domain_admin_user and domain_admin_password in the inventory
+    domain_admin: "LAB\\Administrator"
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    - name: Get domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: current_domain
+      tags: [info]
+
+    - name: Show domain status
+      ansible.builtin.debug:
+        msg: "Current domain/workgroup: {{ current_domain.stdout | trim }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename computer
+    # -------------------------------------------------------------------
+    - name: Rename computer to LAB-SCCM01
+      ansible.windows.win_hostname:
+        name: LAB-SCCM01
+      register: rename_result
+      when: current_hostname.stdout | trim | upper != "LAB-SCCM01"
+      tags: [rename]
+
+    # -------------------------------------------------------------------
+    # Tag: network — set static IP
+    # -------------------------------------------------------------------
+    - name: Configure static IP address
+      ansible.windows.win_shell: |
+        $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        Remove-NetIPAddress -InterfaceAlias $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-NetRoute     -InterfaceAlias $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress -InterfaceAlias $adapter.Name `
+            -IPAddress "{{ lab_sccm_ip | default('10.10.10.20') }}" `
+            -PrefixLength 24 `
+            -DefaultGateway "10.10.10.1"
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+            -ServerAddresses "{{ lab_dc_ip | default('10.10.10.10') }}"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: domain_join — join lab.local domain
+    # -------------------------------------------------------------------
+    - name: Test DC connectivity before domain join
+      ansible.windows.win_shell: |
+        Test-Connection -ComputerName "{{ lab_dc_ip | default('10.10.10.10') }}" -Count 2 -Quiet
+      register: dc_ping
+      tags: [domain_join]
+
+    - name: Fail if DC is not reachable
+      ansible.builtin.fail:
+        msg: "Cannot reach Domain Controller at {{ lab_dc_ip | default('10.10.10.10') }}. Ensure lab-dc01 is running."
+      when: dc_ping.stdout | trim | lower == "false"
+      tags: [domain_join]
+
+    - name: Join domain lab.local
+      ansible.windows.win_domain_membership:
+        dns_domain_name: "{{ domain_name | default('lab.local') }}"
+        domain_admin_user: "{{ domain_admin }}"
+        domain_admin_password: "{{ hostvars[inventory_hostname]['ansible_password'] }}"
+        domain_ou_path: "OU=Servers,DC=lab,DC=local"
+        state: domain
+      register: domain_join_result
+      tags: [domain_join]
+
+    - name: Reboot after domain join
+      ansible.windows.win_reboot:
+        reboot_timeout: 180
+        post_reboot_delay: 30
+      when: domain_join_result.reboot_required | default(false)
+      tags: [domain_join]
+
+    # -------------------------------------------------------------------
+    # Tag: features — install Windows features for SCCM
+    # -------------------------------------------------------------------
+    - name: Install IIS and Web Server features
+      ansible.windows.win_feature:
+        name:
+          - Web-Server
+          - Web-Common-Http
+          - Web-Default-Doc
+          - Web-Dir-Browsing
+          - Web-Http-Errors
+          - Web-Static-Content
+          - Web-Http-Redirect
+          - Web-Http-Logging
+          - Web-Log-Libraries
+          - Web-Request-Monitor
+          - Web-Http-Tracing
+          - Web-Stat-Compression
+          - Web-Dyn-Compression
+          - Web-Filtering
+          - Web-Basic-Auth
+          - Web-Windows-Auth
+          - Web-Net-Ext45
+          - Web-Asp-Net45
+          - Web-ISAPI-Ext
+          - Web-ISAPI-Filter
+          - Web-Mgmt-Console
+          - Web-Metabase
+          - Web-WMI
+          - Web-Mgmt-Tools
+        include_management_tools: true
+        state: present
+      register: iis_result
+      tags: [features]
+
+    - name: Install BITS and RDC features
+      ansible.windows.win_feature:
+        name:
+          - BITS
+          - BITS-IIS-Ext
+          - RDC
+        include_management_tools: true
+        state: present
+      tags: [features]
+
+    - name: Install .NET Framework features
+      ansible.windows.win_feature:
+        name:
+          - NET-Framework-45-Core
+          - NET-Framework-45-ASPNET
+          - NET-WCF-Services45
+          - NET-WCF-HTTP-Activation45
+          - NET-WCF-TCP-PortSharing45
+        state: present
+      tags: [features]
+
+    - name: Install RSAT tools
+      ansible.windows.win_feature:
+        name:
+          - RSAT-Role-Tools
+          - RSAT-AD-Tools
+          - RSAT-AD-PowerShell
+        include_management_tools: true
+        state: present
+      tags: [features]
+
+    - name: Reboot if required after feature install
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: iis_result.reboot_required | default(false)
+      tags: [features]
+
+    # -------------------------------------------------------------------
+    # Tag: directories — create SCCM source directories
+    # -------------------------------------------------------------------
+    - name: Create SCCM sources directory structure
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\SQLServer"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\SCCM_Setup"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\Prereqs"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\ADK"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\Content"
+        - "{{ sccm_sources_dir | default('C:\\SCCM_Sources') }}\\OSD"
+      tags: [directories]
+
+    # -------------------------------------------------------------------
+    # Tag: firewall — configure Windows Firewall for SCCM
+    # -------------------------------------------------------------------
+    - name: Configure Windows Firewall rules for SCCM
+      ansible.windows.win_firewall_rule:
+        name: "{{ item.name }}"
+        localport: "{{ item.port }}"
+        protocol: tcp
+        direction: in
+        action: allow
+        profiles: domain,private
+        state: present
+        enabled: true
+      loop:
+        - { name: "SCCM-HTTP",        port: "80"    }
+        - { name: "SCCM-HTTPS",       port: "443"   }
+        - { name: "SCCM-SMB",         port: "445"   }
+        - { name: "SCCM-WSUS-HTTP",   port: "8530"  }
+        - { name: "SCCM-WSUS-HTTPS",  port: "8531"  }
+        - { name: "SCCM-Client",      port: "10123" }
+        - { name: "SCCM-SQL",         port: "1433"  }
+      tags: [firewall]
+
+    - name: Enable File and Printer Sharing (needed for client push)
+      ansible.windows.win_firewall_rule:
+        name: "File and Printer Sharing (SMB-In)"
+        group: "File and Printer Sharing"
+        enabled: true
+        state: present
+      tags: [firewall]
+
+    # -------------------------------------------------------------------
+    # Tag: prereqs_script — run the PowerShell prereqs script
+    # -------------------------------------------------------------------
+    - name: Copy setup-sccm-prereqs.ps1 to SCCM VM
+      ansible.windows.win_copy:
+        src: "{{ sccm_script_src }}"
+        dest: "{{ sccm_script_dest }}"
+      tags: [prereqs_script]
+
+    - name: Note — manual steps required after this playbook
+      ansible.builtin.debug:
+        msg: |
+          SCCM Prerequisites playbook complete.
+
+          NEXT MANUAL STEPS (must be done on lab-sccm01):
+          1. Install SQL Server 2019/2022 (place installer in C:\SCCM_Sources\SQLServer\)
+             - Use collation: SQL_Latin1_General_CP1_CI_AS
+             - Service account: LAB\svc-sccm
+          2. Install Windows ADK + WinPE Add-on:
+             https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install
+          3. Download SCCM CB Evaluation to C:\SCCM_Sources\SCCM_Setup\:
+             https://www.microsoft.com/en-us/evalcenter/evaluate-microsoft-endpoint-configuration-manager
+          4. Extend AD Schema: run C:\SCCM_Sources\SCCM_Setup\SMSSETUP\BIN\X64\extadsch.exe
+          5. Run SCCM Setup from C:\SCCM_Sources\SCCM_Setup\splash.hta
+             - Site Code: LAB
+             - Site Name: Lab Demo
+
+          See infrastructure/vms/sccm/README.md for the full step-by-step guide.
+      tags: [always]

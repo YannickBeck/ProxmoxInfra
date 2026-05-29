@@ -1,174 +1,211 @@
-# CLAUDE.md — ProxmoxInfra
+# CLAUDE.md – ProxmoxInfra Lab Environment
 
-This file is a guide for Claude Code running **directly on the Proxmox machine** (or a connected workstation with network access to Proxmox). It explains what this repository does, how to set it up, and the exact commands to run in order.
+This file is the primary guide for Claude Code running **on the Proxmox machine itself** (or a workstation with direct access to the Proxmox API). It explains what this repository does, how to configure it, and the exact sequence of commands to run to stand up the full lab.
 
 ---
 
 ## Overview
 
-This repository automates the provisioning and configuration of a Windows lab environment on a Proxmox hypervisor. The lab consists of:
+ProxmoxInfra automates the provisioning of a Windows lab environment on a Proxmox VE 8.x hypervisor. The lab consists of:
 
-- **Domain Controller (DC)** — Windows Server 2022, Active Directory, DNS, DHCP
-- **SCCM Server** — Windows Server 2022, SQL Server, System Center Configuration Manager Current Branch
-- **Windows 11 Client** — Domain-joined test client for SCCM/Intune testing
-- **Raspberry Pi** — Always-on gateway providing ZeroTier VPN access and Wake-on-LAN capability
+- **lab-dc01** (VM 101) – Windows Server 2022, Active Directory Domain Controller for `lab.local`, DNS, DHCP
+- **lab-sccm01** (VM 102) – Windows Server 2022, Microsoft SCCM Current Branch + SQL Server 2019/2022
+- **lab-client01** (VM 103) – Windows 11 Enterprise Evaluation, domain-joined SCCM client
 
-Automation layers:
-- **Terraform** (`bpg/proxmox` provider) — Creates Proxmox VMs
-- **Ansible** (with WinRM) — Configures Windows VMs post-install
-- **PowerShell scripts** — AD DS promotion, SCCM prerequisites, etc.
-- **Bash scripts** — Raspberry Pi setup, WOL packet sender
+Remote access is provided by a Raspberry Pi that runs ZeroTier (always-on VPN overlay) and can send Wake-on-LAN magic packets to power the Proxmox host on demand.
+
+The automation stack is:
+- **Terraform** (`bpg/proxmox` provider) – creates and configures the VMs in Proxmox
+- **Ansible** (`community.windows` / `ansible.windows`) – post-boot Windows configuration
+- **PowerShell scripts** – AD DS promotion, SCCM prerequisites, domain join
 
 ---
 
 ## Prerequisites Checklist
 
-Before running any automation, verify:
+Before running any automation, confirm each item is ready:
 
-- [ ] **Proxmox VE 8.x** installed and accessible at `https://<proxmox-ip>:8006`
+- [ ] **Proxmox VE 8.x** installed and accessible via HTTPS on port 8006
+- [ ] **Proxmox API token** created (see section below)
 - [ ] **Windows Server 2022 Evaluation ISO** uploaded to Proxmox local storage
-  - Filename example: `WinSrv2022_Eval.iso`
+  - Filename expected: `WinSrv2022_EN-US_eval.iso` (or update `terraform.tfvars`)
+  - Download: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2022
   - Upload via: Proxmox UI → pve → local → ISO Images → Upload
 - [ ] **Windows 11 Enterprise Evaluation ISO** uploaded to Proxmox local storage
-  - Filename example: `Win11_Ent_Eval.iso`
+  - Filename expected: `Win11_EN-US_eval.iso` (or update `terraform.tfvars`)
+  - Download: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
 - [ ] **VirtIO drivers ISO** uploaded to Proxmox local storage
+  - Filename expected: `virtio-win.iso`
   - Download: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
-  - Filename: `virtio-win.iso`
-- [ ] **Proxmox API token** created (see section below)
-- [ ] **Terraform >= 1.6** installed on this machine
+- [ ] **Terraform >= 1.6** installed on the machine running `terraform apply`
 - [ ] **Ansible** installed with `ansible.windows` and `community.windows` collections
-- [ ] **Python 3** available (for helper scripts)
-- [ ] **Network bridge `vmbr1`** configured on Proxmox host for internal lab network (10.10.10.0/24)
-- [ ] **WOL enabled** in BIOS/UEFI on the Proxmox host
-- [ ] **Raspberry Pi** on the same LAN as the Proxmox host
-- [ ] **ZeroTier account** created at my.zerotier.com with a private network created
+- [ ] **Python 3** available (for helper scripts and Ansible)
+- [ ] **ZeroTier account** created and a private network configured (note the 16-character Network ID)
+- [ ] **Raspberry Pi** running Raspberry Pi OS Lite 64-bit, connected to home LAN
+- [ ] **Wake-on-LAN** enabled in Proxmox host BIOS/UEFI; NIC MAC address noted
+- [ ] Network bridge **vmbr1** created on Proxmox host (internal lab bridge, no uplink)
 
 ---
 
 ## Implementation Order
 
-### Step 1 — Set Up Network Bridge (vmbr1)
+Follow these steps in sequence. Each step depends on the previous.
 
-On the Proxmox host, create the internal lab bridge if it does not exist:
+### Step 1 – Create the Internal Network Bridge
 
-1. Proxmox UI → pve → System → Network → Create → Linux Bridge
+On the Proxmox host, create `vmbr1` as an internal bridge with no uplink (isolated lab network):
+
+1. In the Proxmox web UI: **Node → Network → Create → Linux Bridge**
 2. Name: `vmbr1`
-3. No IP address (internal only, no gateway)
-4. Comment: `Lab internal network 10.10.10.0/24`
-5. Click Create, then Apply Configuration
+3. IPv4/CIDR: leave blank (VMs will have static IPs)
+4. Bridge ports: leave blank (no uplink — isolated)
+5. Comment: `Lab internal 10.10.10.0/24`
+6. Apply configuration and reboot if prompted
 
-Alternatively via shell on the Proxmox host:
+Alternatively, edit `/etc/network/interfaces` on the Proxmox host:
 
-```bash
-# Edit /etc/network/interfaces and add:
+```
 auto vmbr1
 iface vmbr1 inet static
     address 10.10.10.1/24
     bridge-ports none
     bridge-stp off
     bridge-fd 0
-    comment Lab internal network
+    comment Lab internal 10.10.10.0/24
 ```
 
 Then: `ifreload -a`
 
-### Step 2 — Terraform Init and Apply
+### Step 2 – Terraform Init and Apply (VM Provisioning)
 
 ```bash
-cd infrastructure/proxmox/terraform
+cd /home/user/ProxmoxInfra/infrastructure/proxmox/terraform
 
-# Copy and fill in your values
+# Copy and fill in the example vars file
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your Proxmox endpoint, API token, ISO filenames
+nano terraform.tfvars   # fill in your values
 
+# Export credentials as environment variables (see section below)
 export PM_API_TOKEN_ID="terraform@pam!lab"
 export PM_API_TOKEN_SECRET="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+export TF_VAR_proxmox_api_token="${PM_API_TOKEN_ID}=${PM_API_TOKEN_SECRET}"
 
+# Initialise providers
 terraform init
+
+# Preview what will be created
 terraform plan
+
+# Create the VMs (takes 2–5 minutes)
 terraform apply
 ```
 
-This creates the three VMs (DC, SCCM, Client) as shells — no OS installed yet. VMs will be ready for OS installation from the attached ISOs.
+This creates three VMs (101, 102, 103) in Proxmox. They will be stopped after creation — boot them from the Proxmox UI or with `qm start <vmid>` to begin OS installation.
 
-### Step 3 — Install Windows on Each VM
+### Step 3 – Windows OS Installation (Manual)
 
-1. Start each VM from the Proxmox console
-2. Boot from the Windows ISO (IDE CD-ROM)
-3. Install Windows Server 2022 (Desktop Experience) on DC and SCCM VMs
-4. Install Windows 11 Enterprise on the Client VM
-5. Install VirtIO drivers from the secondary CD-ROM during setup (load driver for SCSI disk)
+Boot each VM from its ISO and perform a standard Windows Server 2022 / Windows 11 installation:
 
-### Step 4 — Run Ansible / PowerShell for Windows Configuration
+1. Boot **lab-dc01** (VM 101) → install Windows Server 2022 Desktop Experience
+2. Boot **lab-sccm01** (VM 102) → install Windows Server 2022 Desktop Experience
+3. Boot **lab-client01** (VM 103) → install Windows 11 Enterprise Evaluation
 
-Enable WinRM on each Windows VM first (run in PowerShell as Administrator):
+For each Server VM, install the VirtIO storage and network drivers from the second CDROM during installation (click "Load driver" and browse the `virtio-win` ISO).
 
+### Step 4 – Windows Configuration via Ansible or PowerShell
+
+**Option A – PowerShell scripts (direct on each VM):**
+
+On lab-dc01, run:
 ```powershell
-# On each Windows VM
+Set-ExecutionPolicy Bypass -Force
+.\infrastructure\vms\dc\powershell\setup-dc.ps1
+```
+
+On lab-sccm01, run:
+```powershell
+.\infrastructure\vms\sccm\powershell\setup-sccm-prereqs.ps1 -DomainJoinCredential (Get-Credential)
+```
+
+**Option B – Ansible (from workstation/Proxmox host):**
+
+Enable WinRM on each Windows VM first (run in PowerShell as Administrator on each VM):
+```powershell
 winrm quickconfig -y
 Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true
 Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true
-# Or use NTLM (preferred — see ansible/README.md)
 ```
 
-Configure `ansible/inventory/lab.yml` from the example file, then:
-
+Then from the control machine:
 ```bash
-cd ansible
+cd /home/user/ProxmoxInfra/ansible
 
-# DC first — sets up AD domain
+# Copy inventory and fill in IPs and credentials
+cp inventory/lab.yml.example inventory/lab.yml
+nano inventory/lab.yml
+
+# Run DC playbook first
 ansible-playbook -i inventory/lab.yml playbooks/dc.yml
 
-# SCCM prereqs after DC is running
+# Run SCCM prereqs after DC is ready
 ansible-playbook -i inventory/lab.yml playbooks/sccm.yml
 ```
 
-### Step 5 — Raspberry Pi Setup
+### Step 5 – Raspberry Pi Setup
+
+Copy the setup script to the Raspberry Pi and run it:
 
 ```bash
-# On the Raspberry Pi
-git clone <this-repo> ~/ProxmoxInfra
-cd ~/ProxmoxInfra/raspberry-pi
-chmod +x setup.sh
-sudo ./setup.sh
+scp raspberry-pi/setup.sh pi@192.168.1.200:~/
+ssh pi@192.168.1.200 "chmod +x setup.sh && sudo ./setup.sh"
 ```
+
+The script installs ZeroTier, prompts for the Network ID, saves the Proxmox MAC address, and starts the WOL API service.
 
 ---
 
 ## Configuring terraform.tfvars
 
-Copy `terraform.tfvars.example` to `terraform.tfvars` and fill in:
+Copy the example file and edit it:
 
-```hcl
-proxmox_endpoint     = "https://192.168.1.100:8006/"   # Your Proxmox IP
-proxmox_api_token    = "terraform@pam!lab=xxxxxxxx-..."  # See below
-proxmox_node         = "pve"                            # Your node name
-windows_server_iso   = "WinSrv2022_Eval.iso"            # Exact ISO filename in local storage
-windows_11_iso       = "Win11_Ent_Eval.iso"
-virtio_iso           = "virtio-win.iso"
-admin_password       = "YourSecureP@ssword1"            # Local admin
-safe_mode_password   = "YourSafeModePwd1!"              # AD DSRM password
+```bash
+cp infrastructure/proxmox/terraform/terraform.tfvars.example \
+   infrastructure/proxmox/terraform/terraform.tfvars
 ```
 
-Never commit `terraform.tfvars` — it is in `.gitignore`.
+**Required values to set:**
+
+| Variable | Description |
+|---|---|
+| `proxmox_endpoint` | HTTPS URL of your Proxmox host, e.g. `https://192.168.1.100:8006/` |
+| `proxmox_api_token` | API token string (see below) |
+| `proxmox_node` | Proxmox node name, usually `pve` |
+| `windows_server_iso` | Exact filename of WinSrv2022 ISO in Proxmox local storage |
+| `windows_11_iso` | Exact filename of Win11 ISO in Proxmox local storage |
+| `admin_password` | Local Administrator password for VMs |
+| `safe_mode_password` | AD DS Safe Mode Administrator Password |
+
+The `terraform.tfvars` file is in `.gitignore` to prevent accidental secret commits. Never commit it.
 
 ---
 
 ## How to Get the Proxmox API Token
 
-1. Log into Proxmox UI as `root`
-2. Navigate to: Datacenter → Permissions → API Tokens
+1. Log in to the Proxmox web UI at `https://<proxmox-ip>:8006`
+2. Navigate to **Datacenter → Permissions → API Tokens**
 3. Click **Add**
-   - User: `terraform@pam` (create this user first under Users if needed)
-   - Token ID: `lab`
-   - Privilege Separation: uncheck (for simplicity in lab)
-4. Copy the displayed secret — it is shown only once
-5. Grant permissions: Datacenter → Permissions → Add → API Token Permission
-   - Path: `/`
-   - Token: `terraform@pam!lab`
-   - Role: `PVEVMAdmin` (or `Administrator` for full access)
+4. User: `root@pam` (or create a dedicated `terraform@pam` user first under Datacenter → Users)
+5. Token ID: `lab` (arbitrary name)
+6. Uncheck "Privilege Separation" for simplicity in a lab (or configure proper ACLs)
+7. Click **Add** — copy the secret immediately, it is only shown once
 
-The full token string format is: `terraform@pam!lab=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+The full token string is: `terraform@pam!lab=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+
+Grant the token sufficient permissions:
+```bash
+# On the Proxmox host shell
+pveum acl modify / -token 'terraform@pam!lab' -role Administrator
+```
 
 ---
 
@@ -177,21 +214,25 @@ The full token string format is: `terraform@pam!lab=xxxxxxxx-xxxx-xxxx-xxxx-xxxx
 Set these before running Terraform:
 
 ```bash
+export PROXMOX_HOST="192.168.1.100"
 export PM_API_TOKEN_ID="terraform@pam!lab"
 export PM_API_TOKEN_SECRET="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-export PROXMOX_HOST="192.168.1.100"
+
+# Combined form used by the bpg/proxmox provider via TF_VAR
+export TF_VAR_proxmox_api_token="${PM_API_TOKEN_ID}=${PM_API_TOKEN_SECRET}"
+export TF_VAR_proxmox_endpoint="https://${PROXMOX_HOST}:8006/"
 ```
 
-Or store them in a `.env` file (which is gitignored):
+Or store them in a `.env` file (also in `.gitignore`) and source it:
 
 ```bash
-# .env
+# .env  — do not commit this file
+PROXMOX_HOST=192.168.1.100
 PM_API_TOKEN_ID=terraform@pam!lab
 PM_API_TOKEN_SECRET=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-PROXMOX_HOST=192.168.1.100
 ```
 
-Source with: `source .env`
+Then: `source .env`
 
 ---
 
@@ -210,75 +251,109 @@ terraform apply
 
 # 4. (After manual Windows install on each VM)
 # Configure Ansible inventory
-cp ansible/inventory/lab.yml.example ansible/inventory/lab.yml
+cp /home/user/ProxmoxInfra/ansible/inventory/lab.yml.example \
+   /home/user/ProxmoxInfra/ansible/inventory/lab.yml
 # Edit lab.yml with correct IPs and credentials
 
 # 5. Run DC playbook
-ansible-playbook -i ansible/inventory/lab.yml ansible/playbooks/dc.yml
+ansible-playbook -i /home/user/ProxmoxInfra/ansible/inventory/lab.yml \
+                    /home/user/ProxmoxInfra/ansible/playbooks/dc.yml
 
-# 6. Run SCCM prereqs playbook
-ansible-playbook -i ansible/inventory/lab.yml ansible/playbooks/sccm.yml
+# 6. Run SCCM prereqs playbook (after DC is promoted and domain is up)
+ansible-playbook -i /home/user/ProxmoxInfra/ansible/inventory/lab.yml \
+                    /home/user/ProxmoxInfra/ansible/playbooks/sccm.yml
 
-# 7. Set up Raspberry Pi
-# SSH into Raspi and run setup.sh
+# 7. Set up Raspberry Pi — SSH in and run setup.sh
+```
+
+Proxmox VM control shortcuts:
+```bash
+qm start 101    # Start lab-dc01
+qm start 102    # Start lab-sccm01
+qm start 103    # Start lab-client01
+qm stop  101    # Stop lab-dc01 (graceful via guest agent if installed)
+qm status 101   # Check status
 ```
 
 ---
 
 ## Windows Licensing Notes
 
-- This lab uses **evaluation ISOs** which are free for 180 days (extendable with `slmgr /rearm`)
-- Download Windows Server 2022 Evaluation: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2022
-- Download Windows 11 Enterprise Evaluation: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
-- No product key is required for evaluation installs — press "I don't have a product key" during setup
-- For production use, valid licenses are required
+This lab uses **Evaluation ISOs** which do not require product keys:
+
+- Windows Server 2022 Evaluation: 180-day trial, renewable once with `slmgr /rearm`
+- Windows 11 Enterprise Evaluation: 90-day trial
+- SQL Server Evaluation: 180 days
+- SCCM Current Branch Evaluation: available from Microsoft Eval Center
+
+These are for **testing and development only**. Do not use in production.
+
+Evaluation ISO download links:
+- Windows Server 2022: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2022
+- Windows 11 Enterprise: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
+- SCCM: https://www.microsoft.com/en-us/evalcenter/evaluate-microsoft-endpoint-configuration-manager
+- SQL Server 2022: https://www.microsoft.com/en-us/evalcenter/evaluate-sql-server-2022
 
 ---
 
 ## ZeroTier Network ID
 
-1. Create an account at https://my.zerotier.com
-2. Create a new private network
-3. Note the **16-character Network ID** (e.g., `a09acf0233abcdef`)
-4. During Raspberry Pi setup, you will be prompted to enter this ID
-5. After the Raspi joins, authorize it in ZeroTier Central under the Members tab
-6. Assign a managed IP to the Raspi (e.g., `172.22.0.1`)
-7. Install ZeroTier on your workstation and join the same network for remote access
+The ZeroTier Network ID is a 16-character hex string (e.g. `a1b2c3d4e5f6a7b8`). Obtain it when you create a network at https://my.zerotier.com.
+
+Key points:
+- Store the Network ID securely — you need it during the Raspberry Pi setup script
+- Each device that joins the network must be **authorized** in ZeroTier Central before it can communicate
+- Assign static managed IPs in ZeroTier Central: Raspi at `172.22.0.1`, workstation at `172.22.0.2`
+- See `raspberry-pi/zerotier/README.md` for full setup steps
 
 ---
 
 ## Wake-on-LAN Setup Instructions
 
 1. **In BIOS/UEFI** on the Proxmox host:
-   - Enable "Wake on LAN" or "Power On by PCI-E" in the power management section
-   - Save and reboot
+   - Enable "Wake on LAN", "Power On by PCI-E/LAN", or similar setting in the power management section
+   - Disable "ErP" or "EuP" energy-saving modes (they disable WOL)
+   - Save and exit BIOS
 
 2. **Find the MAC address** of the Proxmox host's NIC:
    ```bash
-   # On Proxmox host
+   # On Proxmox host shell
    ip link show
-   # Note the MAC of the interface connected to your LAN (e.g., enp3s0)
+   # Note the MAC of the LAN interface (e.g. enp3s0: aa:bb:cc:dd:ee:ff)
    ```
 
-3. **On the Raspberry Pi**, the `setup.sh` script will ask for this MAC and save it to `/etc/wol/proxmox.conf`
+3. **Save to Raspberry Pi** — the `setup.sh` script prompts for the MAC and saves it to `/etc/wol/proxmox.conf`
 
-4. **Test WOL**:
+4. **Send WOL packet**:
    ```bash
    # On Raspberry Pi
    /home/pi/ProxmoxInfra/raspberry-pi/wake-on-lan/wol.sh
+   ```
+
+5. **Via ZeroTier** (remote WOL): use the WOL REST API on port 8080:
+   ```bash
+   curl -X POST http://172.22.0.1:8080/wake \
+        -H "X-API-Key: your_api_key" \
+        -H "Content-Type: application/json"
    ```
 
 ---
 
 ## SCCM Prerequisites Notes
 
-SCCM requires several components that must be downloaded at install time:
+SCCM (Configuration Manager Current Branch) requires several components that must be downloaded from Microsoft during installation:
 
-- **Windows ADK** (Assessment and Deployment Kit) — must be downloaded from Microsoft during SCCM setup or pre-staged
-- **WinPE add-on for ADK** — required for OSD (OS Deployment)
-- **SQL Server** — must be installed before SCCM; SQL Server 2019 or 2022 evaluation is recommended
-- **SCCM Current Branch Evaluation** — download from https://www.microsoft.com/en-us/evalcenter/evaluate-microsoft-endpoint-configuration-manager
-- An **internet connection** from the SCCM VM is needed during initial setup for downloading prerequisite files
-- Estimated download during SCCM setup: 1–3 GB
+- **Windows ADK** (Assessment and Deployment Kit): https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install
+- **ADK WinPE Add-on**: downloaded alongside ADK — required for OS deployment tasks
+- **SQL Server 2019 or 2022**: Evaluation edition is acceptable; install before running SCCM Setup
+- **.NET Framework 4.5+**: normally pre-installed on Server 2022
+- **WSUS role** (optional, for software update point)
+- **Internet access from SCCM VM** during initial setup — SCCM Setup downloads ~1–3 GB of prerequisite files
 
-See `infrastructure/vms/sccm/README.md` for the full step-by-step guide.
+For **Intune co-management**, you additionally need:
+- An Azure AD (Entra ID) tenant
+- Microsoft Intune licenses (or Microsoft 365 E3/E5)
+- Hybrid Azure AD join configured on the domain
+- Co-management enabled in the SCCM console
+
+See `infrastructure/vms/sccm/README.md` for the full step-by-step SCCM guide.

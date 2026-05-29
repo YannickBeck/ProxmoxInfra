@@ -1,0 +1,94 @@
+# =======================================================================
+# terraform.tfvars.example
+# =======================================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is excluded from git (.gitignore) to prevent
+# committing sensitive credentials.
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   nano terraform.tfvars
+# =======================================================================
+
+# -----------------------------------------------------------------------
+# Proxmox connection
+# -----------------------------------------------------------------------
+
+# Full HTTPS URL of your Proxmox host API.
+# Include the trailing slash.
+proxmox_endpoint = "https://192.168.1.100:8006/"
+
+# Proxmox API token in format: user@realm!tokenid=secret
+# See docs/prerequisites.md for how to create this token.
+# Set this in terraform.tfvars or via environment variable:
+#   export TF_VAR_proxmox_api_token="terraform@pam!lab=..."
+proxmox_api_token = "terraform@pam!lab=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Name of your Proxmox node (shown in the UI sidebar, usually "pve").
+proxmox_node = "pve"
+
+# -----------------------------------------------------------------------
+# Network bridges
+# -----------------------------------------------------------------------
+
+# Internal lab bridge (no uplink, isolated).
+# Created manually on Proxmox: vmbr1 at 10.10.10.1/24.
+lab_network_bridge = "vmbr1"
+
+# Home LAN bridge. Change if your WAN bridge is named differently.
+wan_bridge = "vmbr0"
+
+# -----------------------------------------------------------------------
+# Storage
+# -----------------------------------------------------------------------
+
+# Storage ID for ISO images (where you uploaded the ISOs).
+# Check Proxmox UI: Datacenter → pve → local → ISO Images.
+iso_storage = "local"
+
+# Storage ID for VM disks. Use "local-lvm" for LVM thin provisioning
+# or "local" for directory-based storage.
+vm_storage = "local-lvm"
+
+# -----------------------------------------------------------------------
+# ISO filenames
+# -----------------------------------------------------------------------
+# These must exactly match the filenames shown in Proxmox local → ISO Images.
+
+# Windows Server 2022 Evaluation ISO filename.
+# Download from: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2022
+windows_server_iso = "WinSrv2022_EN-US_eval.iso"
+
+# Windows 11 Enterprise Evaluation ISO filename.
+# Download from: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise
+windows_11_iso = "Win11_Ent_eval_x64.iso"
+
+# VirtIO drivers ISO filename (for paravirtualized storage + network drivers).
+# Download from: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/
+virtio_iso = "virtio-win.iso"
+
+# -----------------------------------------------------------------------
+# Active Directory domain
+# -----------------------------------------------------------------------
+
+# AD domain FQDN. Used in setup-dc.ps1 and Ansible playbooks.
+domain_name = "lab.local"
+
+# NetBIOS domain name (pre-Windows 2000 style). Keep it short, uppercase.
+domain_netbios = "LAB"
+
+# -----------------------------------------------------------------------
+# Credentials
+# -----------------------------------------------------------------------
+# Change these from the defaults before using in a real lab.
+# Passwords must meet Windows complexity requirements:
+#   - At least 8 characters (12+ recommended)
+#   - Uppercase + lowercase + number + symbol
+
+# Directory Services Restore Mode (DSRM) password for the DC.
+# Needed for AD recovery scenarios.
+safe_mode_password = "S@feModeP@ss1!"
+
+# Local Administrator password set on each VM.
+# You will use this to log in for the first time after OS installation.
+admin_password = "LabAdm1n!2024"

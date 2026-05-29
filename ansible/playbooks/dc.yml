@@ -1,0 +1,199 @@
+---
+# =======================================================================
+# Domain Controller Playbook
+# =======================================================================
+# Configures lab-dc01 as an Active Directory Domain Controller for lab.local.
+#
+# Prerequisites:
+#   - Windows Server 2022 is installed on lab-dc01
+#   - WinRM is enabled on lab-dc01 (run winrm quickconfig -y)
+#   - Inventory lab.yml is configured with DC credentials
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/dc.yml
+#
+# This playbook runs the setup-dc.ps1 PowerShell script which handles
+# the two-pass DC promotion (first run installs features and promotes,
+# second run after reboot configures DHCP/OUs/service accounts).
+# =======================================================================
+
+- name: Configure Domain Controller – lab-dc01
+  hosts: dc
+  gather_facts: false
+
+  vars:
+    # Script source on the Ansible control machine
+    dc_script_src: "../../infrastructure/vms/dc/powershell/setup-dc.ps1"
+    # Destination on the DC VM
+    dc_script_dest: "C:\\Windows\\Temp\\setup-dc.ps1"
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Gather basic facts
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename and set static IP
+    # -------------------------------------------------------------------
+    - name: Check if computer needs renaming
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: hostname_check
+      tags: [rename, network]
+
+    - name: Rename computer to LAB-DC01
+      ansible.windows.win_hostname:
+        name: LAB-DC01
+      register: rename_result
+      when: hostname_check.stdout | trim | upper != "LAB-DC01"
+      tags: [rename]
+
+    - name: Configure static IP address
+      ansible.windows.win_shell: |
+        $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        Remove-NetIPAddress -InterfaceAlias $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-NetRoute -InterfaceAlias $adapter.Name -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress -InterfaceAlias $adapter.Name `
+            -IPAddress "{{ lab_dc_ip | default('10.10.10.10') }}" `
+            -PrefixLength 24 `
+            -DefaultGateway "10.10.10.1"
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses "127.0.0.1"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: features — install Windows features
+    # -------------------------------------------------------------------
+    - name: Install AD DS, DNS, and DHCP features
+      ansible.windows.win_feature:
+        name:
+          - AD-Domain-Services
+          - DNS
+          - DHCP
+          - RSAT-AD-PowerShell
+          - RSAT-DHCP
+          - RSAT-DNS-Server
+        include_management_tools: true
+        state: present
+      register: features_result
+      tags: [features]
+
+    - name: Show feature installation result
+      ansible.builtin.debug:
+        msg: "Features installed. Reboot required: {{ features_result.reboot_required }}"
+      tags: [features]
+
+    # -------------------------------------------------------------------
+    # Tag: promote — upload and run the setup-dc.ps1 script (Pass 1)
+    # -------------------------------------------------------------------
+    - name: Copy setup-dc.ps1 to DC VM
+      ansible.windows.win_copy:
+        src: "{{ dc_script_src }}"
+        dest: "{{ dc_script_dest }}"
+      tags: [promote]
+
+    - name: Run setup-dc.ps1 Pass 1 (promote DC — will reboot)
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        & "{{ dc_script_dest }}" `
+            -DomainName "{{ domain_name | default('lab.local') }}" `
+            -DomainNetbios "{{ domain_netbios | default('LAB') }}" `
+            -SafeModePassword "{{ safe_mode_password | default('S@feModeP@ss1!') }}"
+      async: 600
+      poll: 0
+      register: promotion_job
+      tags: [promote]
+
+    - name: Wait for DC to reboot after promotion
+      ansible.builtin.wait_for_connection:
+        delay: 60
+        timeout: 300
+        sleep: 15
+      tags: [promote]
+
+    # -------------------------------------------------------------------
+    # Tag: post_promote — run setup-dc.ps1 Pass 2 (DHCP, OUs, accounts)
+    # -------------------------------------------------------------------
+    - name: Wait for AD services to be fully available
+      ansible.windows.win_shell: |
+        $maxWait = 120
+        $waited = 0
+        do {
+            try {
+                Import-Module ActiveDirectory -ErrorAction Stop
+                $domain = Get-ADDomain -ErrorAction Stop
+                Write-Host "AD is ready: $($domain.DNSRoot)"
+                exit 0
+            } catch {
+                Start-Sleep -Seconds 10
+                $waited += 10
+            }
+        } while ($waited -lt $maxWait)
+        Write-Host "AD did not become ready in time"
+        exit 1
+      tags: [post_promote]
+
+    - name: Run setup-dc.ps1 Pass 2 (DHCP, OUs, service accounts)
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        & "{{ dc_script_dest }}" `
+            -DomainName "{{ domain_name | default('lab.local') }}" `
+            -DomainNetbios "{{ domain_netbios | default('LAB') }}"
+      register: post_promote_result
+      tags: [post_promote]
+
+    - name: Show Post-promotion output
+      ansible.builtin.debug:
+        var: post_promote_result.stdout_lines
+      tags: [post_promote]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify DC is working
+    # -------------------------------------------------------------------
+    - name: Validate AD domain is accessible
+      ansible.windows.win_shell: |
+        Import-Module ActiveDirectory
+        $domain = Get-ADDomain
+        Write-Host "Domain: $($domain.DNSRoot)"
+        Write-Host "DC: $($domain.PDCEmulator)"
+        $dcCount = (Get-ADDomainController -Filter *).Count
+        Write-Host "Domain Controllers: $dcCount"
+      register: validation_result
+      tags: [validate]
+
+    - name: Show validation results
+      ansible.builtin.debug:
+        var: validation_result.stdout_lines
+      tags: [validate]
+
+    - name: Validate DHCP scope
+      ansible.windows.win_shell: |
+        Get-DhcpServerv4Scope | Format-Table ScopeId, StartRange, EndRange, State -AutoSize
+      register: dhcp_result
+      tags: [validate]
+
+    - name: Show DHCP scope
+      ansible.builtin.debug:
+        var: dhcp_result.stdout_lines
+      tags: [validate]

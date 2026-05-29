@@ -1,0 +1,104 @@
+---
+# =======================================================================
+# Ansible Inventory – ProxmoxInfra Windows Lab
+# =======================================================================
+# Copy this file to lab.yml and fill in your actual values.
+# lab.yml is excluded from git (.gitignore) to prevent committing
+# credentials.
+#
+# Usage:
+#   cp inventory/lab.yml.example inventory/lab.yml
+#   nano inventory/lab.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/dc.yml
+# =======================================================================
+
+all:
+  children:
+
+    # -------------------------------------------------------------------
+    # Domain Controller
+    # -------------------------------------------------------------------
+    dc:
+      hosts:
+        lab-dc01:
+          # IP address of the DC VM.
+          # Before AD is set up: use the IP set during OS installation.
+          # After AD: still use IP to avoid DNS dependency.
+          ansible_host: 10.10.10.10
+
+          # WinRM connection settings
+          ansible_connection: winrm
+          ansible_winrm_scheme: http
+          ansible_winrm_port: 5985
+
+          # Use NTLM before domain join (local Administrator account)
+          # Switch to kerberos after domain join if desired
+          ansible_winrm_transport: ntlm
+
+          # Don't validate self-signed certificates (not relevant for HTTP)
+          ansible_winrm_server_cert_validation: ignore
+
+          # Credentials — change these to match your VM setup
+          # Use the local Administrator account before domain promotion
+          ansible_user: Administrator
+          ansible_password: "YourAdminPassword123!"    # Change this
+
+          # Python interpreter on the managed node (Windows)
+          ansible_python_interpreter: auto
+
+    # -------------------------------------------------------------------
+    # SCCM + SQL Server
+    # -------------------------------------------------------------------
+    sccm:
+      hosts:
+        lab-sccm01:
+          ansible_host: 10.10.10.20
+          ansible_connection: winrm
+          ansible_winrm_scheme: http
+          ansible_winrm_port: 5985
+          ansible_winrm_transport: ntlm
+          ansible_winrm_server_cert_validation: ignore
+          ansible_user: Administrator
+          ansible_password: "YourAdminPassword123!"    # Change this
+          ansible_python_interpreter: auto
+
+          # Domain credentials (used after domain join for tasks requiring domain)
+          # domain_admin_user: "LAB\\Administrator"
+          # domain_admin_password: "YourAdminPassword123!"
+
+    # -------------------------------------------------------------------
+    # Windows 11 Client
+    # -------------------------------------------------------------------
+    clients:
+      hosts:
+        lab-client01:
+          ansible_host: 10.10.10.50      # Or the DHCP-assigned IP
+          ansible_connection: winrm
+          ansible_winrm_scheme: http
+          ansible_winrm_port: 5985
+          ansible_winrm_transport: ntlm
+          ansible_winrm_server_cert_validation: ignore
+          ansible_user: Administrator
+          ansible_password: "YourAdminPassword123!"    # Change this
+          ansible_python_interpreter: auto
+
+  # -----------------------------------------------------------------------
+  # Group variables that apply to all Windows hosts
+  # -----------------------------------------------------------------------
+  vars:
+    # Timeout for WinRM operations (seconds)
+    ansible_winrm_operation_timeout_sec: 120
+    ansible_winrm_read_timeout_sec: 150
+
+    # Domain configuration (used by playbooks)
+    domain_name: lab.local
+    domain_netbios: LAB
+    lab_dc_ip: 10.10.10.10
+    lab_sccm_ip: 10.10.10.20
+
+    # SCCM site configuration
+    sccm_site_code: LAB
+    sccm_site_name: "Lab Demo"
+
+    # Source directories on SCCM VM
+    sccm_sources_dir: "C:\\SCCM_Sources"

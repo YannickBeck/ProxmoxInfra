@@ -1,0 +1,121 @@
+# =======================================================================
+# ProxmoxInfra .gitignore
+# =======================================================================
+
+# -----------------------------------------------------------------------
+# Terraform
+# -----------------------------------------------------------------------
+# Provider plugins and modules (downloaded by terraform init)
+**/.terraform/
+**/.terraform.lock.hcl
+
+# State files — contain sensitive resource details, never commit
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Actual tfvars files (contain secrets — only commit .example versions)
+terraform.tfvars
+!terraform.tfvars.example
+*.auto.tfvars
+!*.auto.tfvars.example
+
+# Override files (local-only Terraform customisations)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# -----------------------------------------------------------------------
+# Ansible
+# -----------------------------------------------------------------------
+# Actual inventory files (contain credentials — only commit .example)
+ansible/inventory/lab.yml
+!ansible/inventory/lab.yml.example
+
+# Ansible retry files
+*.retry
+
+# Ansible vault password files
+.vault_pass
+vault_password_file
+
+# -----------------------------------------------------------------------
+# Environment / secrets
+# -----------------------------------------------------------------------
+.env
+.env.*
+*.env
+!*.env.example
+
+# SSH keys
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# -----------------------------------------------------------------------
+# Python
+# -----------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# -----------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------
+*.log
+logs/
+
+# -----------------------------------------------------------------------
+# OS and editor files
+# -----------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Linux
+*~
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# -----------------------------------------------------------------------
+# Temporary files
+# -----------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
