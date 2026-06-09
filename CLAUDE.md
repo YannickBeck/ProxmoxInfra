@@ -339,6 +339,35 @@ Key points:
 
 ---
 
+## Extension VMs
+
+After the base lab is running, you can enable additional VMs by setting toggles in `terraform.tfvars` and running `terraform apply` again. Each is documented in `docs/extensions.md`.
+
+| Toggle | VM | IP | Purpose |
+|---|---|---|---|
+| `enable_pfsense = true` | lab-fw01 (100) | 10.10.10.1 | NAT internet for lab VMs. Deploy first. |
+| `enable_ca = true` | lab-ca01 (104) | 10.10.10.30 | Internal PKI (SCCM certs, LDAPS) |
+| `enable_dc02 = true` | lab-dc02 (105) | 10.10.10.11 | Secondary DC, AD replication practice |
+| `enable_aadconnect = true` | lab-aadc01 (106) | 10.10.10.40 | Hybrid Azure AD Join + Intune co-mgmt |
+| `wsus_content_disk_size = 150` | lab-sccm01 extra disk | – | WSUS / Software Update Point content |
+
+**When enabling pfSense:** Remove `address 10.10.10.1/24` from the Proxmox host's vmbr1 in `/etc/network/interfaces` (change to `iface vmbr1 inet manual`) and run `ifreload -a`. pfSense becomes the 10.10.10.1 gateway.
+
+After `terraform apply` for an extension VM:
+1. Boot the VM from its ISO (or from Packer template if available)
+2. Run the corresponding `setup-*.ps1` or Ansible playbook
+3. See `infrastructure/vms/<role>/README.md` for the full guide
+
+Packer templates (optional, removes the manual Windows install step):
+```bash
+cd infrastructure/packer
+packer init .
+packer build .
+# then update Terraform resources to use clone blocks
+```
+
+---
+
 ## SCCM Prerequisites Notes
 
 SCCM (Configuration Manager Current Branch) requires several components that must be downloaded from Microsoft during installation:

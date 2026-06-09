@@ -92,3 +92,33 @@ safe_mode_password = "S@feModeP@ss1!"
 # Local Administrator password set on each VM.
 # You will use this to log in for the first time after OS installation.
 admin_password = "LabAdm1n!2024"
+
+# -----------------------------------------------------------------------
+# Optional extension VMs  (see docs/extensions.md)
+# -----------------------------------------------------------------------
+# All default to false. Set to true to create the corresponding VM.
+# Run `terraform apply` after changing — it will create only the new VM.
+
+# VM 100 – lab-fw01: pfSense router/firewall (NAT + segmentation).
+# Download pfSense CE ISO and upload to Proxmox before enabling.
+# When enabling, also remove 10.10.10.1 from the Proxmox host's vmbr1.
+enable_pfsense = false
+pfsense_iso    = "pfSense-CE-2.7.2-RELEASE-amd64.iso"
+
+# VM 104 – lab-ca01: Enterprise Root CA (AD CS).
+enable_ca = false
+
+# VM 105 – lab-dc02: Secondary Domain Controller.
+enable_dc02 = false
+
+# VM 106 – lab-aadc01: Azure AD Connect / Entra Connect Sync.
+# Requires internet access (enable_pfsense or temporary uplink).
+enable_aadconnect = false
+
+# -----------------------------------------------------------------------
+# Optional WSUS content disk on lab-sccm01 (Software Update Point)
+# -----------------------------------------------------------------------
+# Set to 0 to skip. 150 GB is a practical minimum for a Windows 11 + Server
+# update baseline. The disk appears as scsi2 and is initialized as E:\WSUS
+# by setup-wsus-sup.ps1.
+wsus_content_disk_size = 0

@@ -6,18 +6,30 @@ This document covers IP addressing, routing, DNS, DHCP, firewall rules, and port
 
 ## IP Address Plan
 
+### Home / Physical Layer
+
 | Device | Interface | IP Address | Subnet | Notes |
 |---|---|---|---|---|
 | Home Router | LAN | 192.168.1.1 | 192.168.1.0/24 | Default gateway for home LAN |
-| Proxmox Host | vmbr0 (home LAN) | 192.168.1.100 | 192.168.1.0/24 | Recommend reserving this in router DHCP |
-| Proxmox Host | vmbr1 (lab) | 10.10.10.1 | 10.10.10.0/24 | Gateway for all lab VMs |
-| lab-dc01 | vmbr1 | 10.10.10.10 | 10.10.10.0/24 | Static; set during OS post-install config |
-| lab-sccm01 | vmbr1 | 10.10.10.20 | 10.10.10.0/24 | Static; set during OS post-install config |
-| lab-client01 | vmbr1 | 10.10.10.50 | 10.10.10.0/24 | Static, or use DHCP (will get 10.10.10.100+) |
-| Raspberry Pi | eth0 (home LAN) | 192.168.1.200 | 192.168.1.0/24 | Static; recommend reserving in router |
+| Proxmox Host | vmbr0 (home LAN) | 192.168.1.100 | 192.168.1.0/24 | Recommend reserving in router DHCP |
+| Raspberry Pi | eth0 (home LAN) | 192.168.1.200 | 192.168.1.0/24 | Static; always on |
 | Raspberry Pi | ZeroTier | 172.22.0.1 | 172.22.0.0/16 | Assigned in ZeroTier Central |
 | Workstation | ZeroTier | 172.22.0.2 | 172.22.0.0/16 | Assigned in ZeroTier Central |
 | Proxmox Host | ZeroTier (optional) | 172.22.0.3 | 172.22.0.0/16 | Only if ZT installed on Proxmox host |
+
+### Lab VMs (vmbr1, 10.10.10.0/24)
+
+| Device | VMID | IP | Static/DHCP | Notes |
+|---|---|---|---|---|
+| lab-fw01 (pfSense) | 100 | 10.10.10.1 (LAN) | Static | **Extension** (`enable_pfsense`). Replaces Proxmox host as gateway. WAN: DHCP on vmbr0. |
+| Proxmox vmbr1 | – | 10.10.10.1 | Static | **Only when pfSense NOT deployed.** Remove when pfSense is enabled. |
+| lab-dc01 | 101 | 10.10.10.10 | Static | Primary DC, DNS, DHCP server |
+| lab-dc02 | 105 | 10.10.10.11 | Static | **Extension** (`enable_dc02`). Replica DC, secondary DNS. |
+| lab-sccm01 | 102 | 10.10.10.20 | Static | SCCM + SQL + optional WSUS |
+| lab-ca01 | 104 | 10.10.10.30 | Static | **Extension** (`enable_ca`). Enterprise Root CA. |
+| lab-aadc01 | 106 | 10.10.10.40 | Static | **Extension** (`enable_aadconnect`). Azure AD Connect. |
+| lab-client01 | 103 | 10.10.10.50 | Static or DHCP | Windows 11 client; DHCP range starts at .100 |
+| DHCP range | – | 10.10.10.100–200 | Dynamic | Served by lab-dc01 Windows DHCP role |
 
 ---
 

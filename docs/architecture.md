@@ -32,19 +32,41 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 
 ### VM Inventory
 
+**Core VMs (always created):**
+
 | VM | VMID | Hostname | OS | IP Address | Role |
 |---|---|---|---|---|---|
 | Domain Controller | 101 | lab-dc01 | Windows Server 2022 | 10.10.10.10 | AD DS, DNS, DHCP |
 | SCCM + SQL | 102 | lab-sccm01 | Windows Server 2022 | 10.10.10.20 | SCCM CB, SQL Server 2019/2022 |
-| Windows 11 Client | 103 | lab-client01 | Windows 11 Enterprise Eval | 10.10.10.50 (static) or DHCP | Domain client, SCCM managed |
+| Windows 11 Client | 103 | lab-client01 | Windows 11 Enterprise Eval | 10.10.10.50 or DHCP | Domain client, SCCM managed |
+
+**Extension VMs (opt-in via Terraform toggle — see docs/extensions.md):**
+
+| VM | VMID | Toggle | Hostname | IP | Role |
+|---|---|---|---|---|---|
+| pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall |
+| Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI, SCCM certs, LDAPS |
+| Secondary DC | 105 | `enable_dc02` | lab-dc02 | 10.10.10.11 | AD replication, DNS redundancy |
+| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra sync, Hybrid AADJ, co-mgmt |
 
 ### VM Specifications
 
-| VM | vCPU | RAM | OS Disk | Data Disk | Notes |
+**Core VMs:**
+
+| VM | vCPU | RAM | OS Disk | Data Disk(s) | Notes |
 |---|---|---|---|---|---|
 | lab-dc01 | 2 | 4 GB | 60 GB (SCSI) | – | Lightweight; handles DC, DNS, DHCP |
-| lab-sccm01 | 4 | 8 GB | 100 GB (SCSI) | 100 GB (SCSI) | OS on first disk; SQL data on second |
+| lab-sccm01 | 4 | 8 GB | 100 GB (SCSI) | 100 GB SQL + optional WSUS disk | OS on scsi0; SQL data on scsi1; optional WSUS on scsi2 |
 | lab-client01 | 2 | 4 GB | 60 GB (SCSI) | – | TPM 2.0 emulated for Win11 requirements |
+
+**Extension VMs:**
+
+| VM | vCPU | RAM | Disk | Notes |
+|---|---|---|---|---|
+| lab-fw01 | 2 | 2 GB | 16 GB | Dual-NIC: vmbr0 (WAN) + vmbr1 (LAN) |
+| lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA, domain-joined |
+| lab-dc02 | 2 | 4 GB | 60 GB | Replica DC, same specs as DC01 |
+| lab-aadc01 | 2 | 4 GB | 60 GB | Member server, needs internet (pfSense) |
 
 ---
 
@@ -123,14 +145,22 @@ lab-dc01 (must be fully booted and AD domain ready)
 When powering on the lab from scratch:
 
 1. **Wake Proxmox host** (via WOL from Raspberry Pi or power button)
-2. **Start lab-dc01** (VM 101): `qm start 101`
-   - Wait ~3–5 minutes for Windows to boot and AD services to start
-3. **Start lab-sccm01** (VM 102): `qm start 102`
-   - Wait ~5–10 minutes for Windows, SQL, and SCCM services to start
-4. **Start lab-client01** (VM 103): `qm start 103`
+2. **Start lab-fw01** (VM 100, if deployed): `qm start 100` — wait for pfSense to be ready before continuing
+3. **Start lab-dc01** (VM 101): `qm start 101` — wait ~3–5 min for AD services
+4. **Start lab-dc02** (VM 105, if deployed): `qm start 105`
+5. **Start lab-ca01** (VM 104, if deployed): `qm start 104`
+6. **Start lab-sccm01** (VM 102): `qm start 102` — wait ~5–10 min for SQL + SCCM services
+7. **Start lab-aadc01** (VM 106, if deployed): `qm start 106`
+8. **Start lab-client01** (VM 103): `qm start 103`
 
 Shutdown order (reverse):
-1. `qm shutdown 103`
-2. `qm shutdown 102`
-3. `qm shutdown 101`
-4. Proxmox host can then be powered off: `shutdown -h now`
+```bash
+qm shutdown 103   # client first
+qm shutdown 106   # Azure AD Connect
+qm shutdown 102   # SCCM + SQL
+qm shutdown 104   # CA
+qm shutdown 105   # DC02
+qm shutdown 101   # Primary DC last
+qm shutdown 100   # pfSense
+shutdown -h now   # Proxmox host
+```

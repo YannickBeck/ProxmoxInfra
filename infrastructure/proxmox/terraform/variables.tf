@@ -102,3 +102,54 @@ variable "admin_password" {
   sensitive   = true
   description = "Local Administrator password set on each VM. Must meet Windows complexity requirements (12+ chars, mixed case, number, symbol)."
 }
+
+# -----------------------------------------------------------------------
+# Optional extension VMs (default OFF — opt-in per docs/extensions.md)
+# -----------------------------------------------------------------------
+# These toggles let you grow the base 3-VM lab into a fuller enterprise
+# environment. Each defaults to false so the base lab is unchanged unless
+# you explicitly enable an extension in terraform.tfvars.
+
+variable "enable_pfsense" {
+  type        = bool
+  default     = false
+  description = "Create VM 100 (lab-fw01), a pfSense CE router/firewall providing NAT internet + segmentation for the lab. When enabled, pfSense becomes the 10.10.10.1 gateway — remove the IP from the Proxmox host's vmbr1 (see infrastructure/vms/pfsense/README.md)."
+}
+
+variable "enable_dc02" {
+  type        = bool
+  default     = false
+  description = "Create VM 105 (lab-dc02), a secondary/replica Domain Controller at 10.10.10.11 for AD replication, DNS redundancy, and FSMO failover practice."
+}
+
+variable "enable_ca" {
+  type        = bool
+  default     = false
+  description = "Create VM 104 (lab-ca01), an Enterprise Root CA (AD CS) at 10.10.10.30 issuing PKI certificates for SCCM HTTPS, IIS, and LDAPS."
+}
+
+variable "enable_aadconnect" {
+  type        = bool
+  default     = false
+  description = "Create VM 106 (lab-aadc01), a member server at 10.10.10.40 running Microsoft Entra Connect Sync (Azure AD Connect) for hybrid identity / Intune co-management."
+}
+
+# -----------------------------------------------------------------------
+# Optional WSUS content disk for the SCCM VM (Software Update Point)
+# -----------------------------------------------------------------------
+
+variable "wsus_content_disk_size" {
+  type        = number
+  default     = 0
+  description = "Size in GB of an extra data disk on lab-sccm01 for WSUS/Software Update Point content. Set 0 to omit the disk; 150 is a reasonable value for a lab. Initialize it as E:\\WSUS in Windows (see setup-wsus-sup.ps1)."
+}
+
+# -----------------------------------------------------------------------
+# pfSense ISO (only needed when enable_pfsense = true)
+# -----------------------------------------------------------------------
+
+variable "pfsense_iso" {
+  type        = string
+  default     = "pfSense-CE-2.7.2-RELEASE-amd64.iso"
+  description = "Filename of the pfSense CE installer ISO in Proxmox local storage. Download from https://www.pfsense.org/download/."
+}

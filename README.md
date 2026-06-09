@@ -45,13 +45,26 @@ Internet
 
 ## Components
 
-| Component | Role | IP Address |
+**Core (always deployed):**
+
+| Component | Role | IP |
 |---|---|---|
-| Proxmox Host | Hypervisor | 192.168.1.100 (home LAN) / 10.10.10.1 (lab) |
+| Proxmox Host | Hypervisor | 192.168.1.100 (LAN) / 10.10.10.1 (lab, base setup) |
 | lab-dc01 (VM 101) | Windows Server 2022, AD DS, DNS, DHCP | 10.10.10.10 |
 | lab-sccm01 (VM 102) | Windows Server 2022, SCCM CB + SQL Server | 10.10.10.20 |
-| lab-client01 (VM 103) | Windows 11 Enterprise Evaluation | 10.10.10.50 (static) or DHCP |
+| lab-client01 (VM 103) | Windows 11 Enterprise Evaluation | 10.10.10.50 / DHCP |
 | Raspberry Pi | Always-on gateway, ZeroTier node, WOL sender | 192.168.1.200 / 172.22.0.1 (ZT) |
+
+**Extensions (opt-in via `terraform.tfvars` — see [docs/extensions.md](docs/extensions.md)):**
+
+| Component | Role | IP | Toggle |
+|---|---|---|---|
+| lab-fw01 (VM 100) | pfSense CE router, NAT internet, firewall | 10.10.10.1 (LAN) | `enable_pfsense` |
+| lab-ca01 (VM 104) | AD CS Enterprise Root CA — SCCM PKI, LDAPS, auto-enroll | 10.10.10.30 | `enable_ca` |
+| lab-dc02 (VM 105) | Secondary DC — AD replication, DNS redundancy, FSMO drills | 10.10.10.11 | `enable_dc02` |
+| lab-aadc01 (VM 106) | Azure AD Connect / Entra sync — Hybrid AADJ + Intune co-mgmt | 10.10.10.40 | `enable_aadconnect` |
+| WSUS disk on SCCM | Extra data disk for Software Update Point (E:\\WSUS) | – | `wsus_content_disk_size` |
+| Packer templates | Unattended Windows golden images (VMID 9000/9001) | – | Separate build step |
 
 ---
 
@@ -139,13 +152,26 @@ ProxmoxInfra/
 │       ├── wol-api.py                 # Flask REST API for remote WOL
 │       └── wol-api.service            # systemd unit for WOL API
 │
-└── ansible/
-    ├── README.md                      # Ansible overview
-    ├── inventory/
-    │   └── lab.yml.example            # Inventory template
-    └── playbooks/
-        ├── dc.yml                     # DC configuration playbook
-        └── sccm.yml                   # SCCM prerequisites playbook
+├── ansible/
+│   ├── README.md
+│   ├── inventory/
+│   │   └── lab.yml.example
+│   └── playbooks/
+│       ├── dc.yml / dc02.yml / sccm.yml / ca.yml / wsus.yml
+│
+├── docs/
+│   ├── architecture.md
+│   ├── extensions.md                  # Guide to all optional extension VMs
+│   ├── network-design.md
+│   └── prerequisites.md
+│
+└── infrastructure/
+    ├── azuread-connect/               # Azure AD Connect (extension)
+    ├── packer/                        # Unattended Windows templates (optional)
+    ├── proxmox/terraform/             # Terraform VM provisioning
+    └── vms/
+        ├── ca/       ├── client/  ├── dc/
+        ├── dc02/     ├── pfsense/ └── sccm/
 ```
 
 ---
