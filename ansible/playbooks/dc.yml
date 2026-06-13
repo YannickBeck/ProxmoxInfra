@@ -8,6 +8,9 @@
 #   - Windows Server 2022 is installed on lab-dc01
 #   - WinRM is enabled on lab-dc01 (run winrm quickconfig -y)
 #   - Inventory lab.yml is configured with DC credentials
+#   - Ansible Vault: inventory/group_vars/all/vault.yml must exist and be
+#     encrypted with ansible-vault (safe_mode_password and svc_sccm_password
+#     are read from there via group_vars/all/main.yml aliases)
 #
 # Usage:
 #   ansible-playbook -i inventory/lab.yml playbooks/dc.yml
@@ -26,6 +29,12 @@
     dc_script_src: "../../infrastructure/vms/dc/powershell/setup-dc.ps1"
     # Destination on the DC VM
     dc_script_dest: "C:\\Windows\\Temp\\setup-dc.ps1"
+
+    # Passwords resolved from vault via group_vars/all/main.yml
+    # (vault_safe_mode_password  → safe_mode_password)
+    # (vault_svc_sccm_password   → svc_sccm_password)
+    safe_mode_password: "{{ safe_mode_password }}"
+    svc_sccm_password:  "{{ svc_sccm_password }}"
 
   tasks:
 
@@ -117,9 +126,10 @@
       ansible.windows.win_shell: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
         & "{{ dc_script_dest }}" `
-            -DomainName "{{ domain_name | default('lab.local') }}" `
-            -DomainNetbios "{{ domain_netbios | default('LAB') }}" `
-            -SafeModePassword "{{ safe_mode_password | default('S@feModeP@ss1!') }}"
+            -DomainName    "{{ lab_domain | default('lab.local') }}" `
+            -DomainNetbios "{{ lab_netbios | default('LAB') }}" `
+            -SafeModePassword '{{ safe_mode_password }}' `
+            -SvcSccmPassword  '{{ svc_sccm_password }}'
       async: 600
       poll: 0
       register: promotion_job
@@ -158,8 +168,9 @@
       ansible.windows.win_shell: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
         & "{{ dc_script_dest }}" `
-            -DomainName "{{ domain_name | default('lab.local') }}" `
-            -DomainNetbios "{{ domain_netbios | default('LAB') }}"
+            -DomainName    "{{ lab_domain | default('lab.local') }}" `
+            -DomainNetbios "{{ lab_netbios | default('LAB') }}" `
+            -SvcSccmPassword '{{ svc_sccm_password }}'
       register: post_promote_result
       tags: [post_promote]
 

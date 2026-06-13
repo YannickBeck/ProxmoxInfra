@@ -1,0 +1,37 @@
+# =======================================================================
+# vault.yml.example — Ansible Vault Template
+# =======================================================================
+# Copy this file to vault.yml and encrypt it:
+#
+#   cp inventory/group_vars/all/vault.yml.example \
+#      inventory/group_vars/all/vault.yml
+#   ansible-vault encrypt inventory/group_vars/all/vault.yml
+#
+# To edit after encryption:
+#   ansible-vault edit inventory/group_vars/all/vault.yml
+#
+# vault.yml is excluded from git (.gitignore) to prevent committing secrets.
+# CHANGE ALL DEFAULT PASSWORDS below before encrypting.
+# =======================================================================
+
+---
+# ansible-vault encrypt vault.yml
+
+# Local Administrator password on all lab VMs — CHANGE THIS
+vault_admin_password: "LabAdm1n!2024"
+
+# AD DS Safe Mode / DSRM recovery password — CHANGE THIS
+vault_safe_mode_password: "S@feModeP@ss1!"
+
+# svc-sccm service account password — CHANGE THIS
+vault_svc_sccm_password: "SccmSvc!2024Lab"
+
+# Account used to join machines to the lab.local domain
+vault_domain_join_user: "LAB\\Administrator"
+
+# Password for the domain join account — CHANGE THIS
+vault_domain_join_password: "LabAdm1n!2024"
+
+# Routable UPN suffix registered in Azure AD / Entra ID for Azure AD Connect
+# Example: contoso.onmicrosoft.com or a verified custom domain
+vault_entra_upn_suffix: "labdemo.onmicrosoft.com"

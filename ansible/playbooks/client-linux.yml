@@ -1,0 +1,415 @@
+---
+# =======================================================================
+# Linux Clients Playbook
+# =======================================================================
+# Configures Linux client VMs in the clients_linux inventory group.
+# Supports:
+#   - lab-linux01 (Ubuntu 22.04 LTS)
+#   - lab-linux02 (Rocky Linux 9)
+#
+# Prerequisites:
+#   - Linux VMs are booted and SSH is accessible
+#   - Inventory lab.yml has clients_linux group uncommented
+#   - SSH key or password auth is configured for the ansible_user
+#   - lab-dc01 is running (needed for NTP, optional AD join)
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/client-linux.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/client-linux.yml \
+#       --limit lab-linux01
+#   ansible-playbook -i inventory/lab.yml playbooks/client-linux.yml \
+#       --tags packages,configure
+#
+#   Skip optional AD domain join (default — no AD integration):
+#   ansible-playbook -i inventory/lab.yml playbooks/client-linux.yml \
+#       --skip-tags domain_join
+#
+#   Run only the AD domain join:
+#   ansible-playbook -i inventory/lab.yml playbooks/client-linux.yml \
+#       --tags domain_join
+#
+# What this playbook does:
+#   1. Detects OS family (Debian/RedHat) and installs/upgrades packages
+#   2. Sets hostname from inventory name
+#   3. Configures chrony NTP (pointing at lab DC 10.10.10.10)
+#   4. Sets timezone to Europe/Berlin
+#   5. Hardens SSH (PasswordAuthentication yes for lab convenience)
+#   6. OPTIONAL: Joins the lab.local AD domain via realm/SSSD
+#   7. OPTIONAL: Installs node_exporter for Prometheus monitoring (VM 120)
+#   8. Validates hostname and DC reachability
+# =======================================================================
+
+- name: Configure Linux Clients – clients_linux
+  hosts: clients_linux
+  gather_facts: true        # needed for ansible_os_family detection
+  become: true
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted
+
+    - name: restart chrony
+      ansible.builtin.service:
+        name: chrony
+        state: restarted
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check (always runs regardless of tags)
+    # -------------------------------------------------------------------
+    - name: Wait for SSH to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Linux host
+      ansible.builtin.ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state
+    # -------------------------------------------------------------------
+    - name: Show hostname and OS family
+      ansible.builtin.debug:
+        msg:
+          - "Hostname   : {{ ansible_hostname }}"
+          - "OS Family  : {{ ansible_os_family }}"
+          - "Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: packages — update system and install base packages
+    # -------------------------------------------------------------------
+    - name: Update apt package cache and upgrade all packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      tags: [packages]
+
+    - name: Update all packages via dnf (RedHat/Rocky)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_os_family == "RedHat"
+      tags: [packages]
+
+    - name: Install base packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - wget
+          - vim
+          - net-tools
+          - chrony
+          - ca-certificates
+          - htop
+          - unzip
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [packages]
+
+    - name: Install base packages (RedHat/Rocky)
+      ansible.builtin.dnf:
+        name:
+          - git
+          - curl
+          - wget
+          - vim
+          - net-tools
+          - chrony
+          - ca-certificates
+          - htop
+          - unzip
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [packages]
+
+    # -------------------------------------------------------------------
+    # Tag: configure — hostname, NTP, timezone, SSH hardening
+    # -------------------------------------------------------------------
+    - name: Set hostname from inventory name
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+      tags: [configure]
+
+    - name: Update /etc/hosts with current hostname
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "^127\\.0\\.1\\.1"
+        line: "127.0.1.1  {{ inventory_hostname }}"
+        state: present
+      tags: [configure]
+
+    - name: Configure chrony NTP server (pointing at lab DC / NTP source)
+      ansible.builtin.lineinfile:
+        path: /etc/chrony.conf
+        regexp: "^server {{ lab_ntp_server | default('10.10.10.10') }}"
+        line: "server {{ lab_ntp_server | default('10.10.10.10') }} iburst"
+        insertafter: "^# Use public servers"
+        state: present
+      notify: restart chrony
+      tags: [configure]
+
+    - name: Enable and start chrony
+      ansible.builtin.service:
+        name: chrony
+        state: started
+        enabled: true
+      tags: [configure]
+
+    - name: Set timezone to Europe/Berlin
+      community.general.timezone:
+        name: Europe/Berlin
+      tags: [configure]
+
+    - name: Harden SSH — PermitRootLogin no
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin no"
+        state: present
+      notify: restart sshd
+      tags: [configure]
+
+    # NOTE: PasswordAuthentication is set to yes for lab convenience.
+    # In production, set this to no and distribute SSH keys instead.
+    - name: Harden SSH — PasswordAuthentication yes (lab mode)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication yes"
+        state: present
+      notify: restart sshd
+      tags: [configure]
+
+    - name: Harden SSH — MaxAuthTries 3
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?MaxAuthTries"
+        line: "MaxAuthTries 3"
+        state: present
+      notify: restart sshd
+      tags: [configure]
+
+    # -------------------------------------------------------------------
+    # Tag: domain_join — OPTIONAL AD join via realm/SSSD
+    # Skip with: --skip-tags domain_join  (this is the default)
+    # Run with:  --tags domain_join
+    # -------------------------------------------------------------------
+    # This block joins the Linux host to lab.local using realmd/SSSD.
+    # After joining, users can log in with their AD credentials:
+    #   ssh LAB\\jsmith@10.10.10.60
+    # or: ssh jsmith@lab.local@10.10.10.60
+
+    - name: Install realm/SSSD packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - realmd
+          - sssd
+          - sssd-tools
+          - libnss-sss
+          - libpam-sss
+          - oddjob
+          - oddjob-mkhomedir
+          - adcli
+          - packagekit
+          - samba-common-bin
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [domain_join]
+
+    - name: Install realm/SSSD packages (RedHat/Rocky)
+      ansible.builtin.dnf:
+        name:
+          - realmd
+          - sssd
+          - sssd-tools
+          - oddjob
+          - oddjob-mkhomedir
+          - adcli
+          - samba-common
+          - samba-common-tools
+          - krb5-workstation
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [domain_join]
+
+    - name: Check if already joined to lab.local
+      ansible.builtin.shell: realm list | grep -c "{{ lab_domain | default('lab.local') }}" || true
+      register: realm_check
+      changed_when: false
+      tags: [domain_join]
+
+    - name: Join lab.local domain via realm
+      ansible.builtin.shell: |
+        echo "{{ domain_join_password }}" | \
+        realm join -U "{{ domain_join_user | replace('LAB\\\\', '') | replace('LAB\\', '') }}" \
+            "{{ lab_domain | default('lab.local') }}"
+      when: realm_check.stdout | trim == "0"
+      tags: [domain_join]
+
+    - name: Configure SSSD for AD — /etc/sssd/sssd.conf
+      ansible.builtin.template:
+        dest: /etc/sssd/sssd.conf
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          [sssd]
+          domains = {{ lab_domain | default('lab.local') }}
+          config_file_version = 2
+          services = nss, pam
+
+          [domain/{{ lab_domain | default('lab.local') }}]
+          ad_domain = {{ lab_domain | default('lab.local') }}
+          krb5_realm = {{ lab_netbios | default('LAB') }}.LOCAL
+          realmd_tags = manages-system joined-with-adcli
+          cache_credentials = True
+          id_provider = ad
+          access_provider = ad
+          # Disable GPO-based access control for lab simplicity
+          ad_gpo_access_control = disabled
+          krb5_store_password_if_offline = True
+          default_shell = /bin/bash
+          ldap_id_mapping = True
+          fallback_homedir = /home/%u@%d
+          use_fully_qualified_names = False
+      when: realm_check.stdout | trim == "0"
+      tags: [domain_join]
+
+    - name: Enable and restart SSSD after AD join
+      ansible.builtin.service:
+        name: sssd
+        state: restarted
+        enabled: true
+      when: realm_check.stdout | trim == "0"
+      tags: [domain_join]
+
+    - name: Enable automatic home directory creation on first login
+      ansible.builtin.shell: pam-auth-update --enable mkhomedir
+      when:
+        - realm_check.stdout | trim == "0"
+        - ansible_os_family == "Debian"
+      changed_when: true
+      tags: [domain_join]
+
+    # -------------------------------------------------------------------
+    # Tag: monitoring — install node_exporter (Prometheus metrics)
+    # Enables scraping by a Prometheus/Grafana VM (VM 120) if deployed.
+    # The exporter listens on port 9100 by default.
+    # -------------------------------------------------------------------
+    - name: Check if node_exporter is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/node_exporter
+      register: node_exporter_stat
+      tags: [monitoring]
+
+    - name: Download node_exporter binary
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v1.8.1/node_exporter-1.8.1.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: "0644"
+      when: not node_exporter_stat.stat.exists
+      tags: [monitoring]
+
+    - name: Extract node_exporter
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp/
+        remote_src: true
+      when: not node_exporter_stat.stat.exists
+      tags: [monitoring]
+
+    - name: Install node_exporter binary
+      ansible.builtin.copy:
+        src: /tmp/node_exporter-1.8.1.linux-amd64/node_exporter
+        dest: /usr/local/bin/node_exporter
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+      when: not node_exporter_stat.stat.exists
+      tags: [monitoring]
+
+    - name: Create node_exporter systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=nobody
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+      tags: [monitoring]
+
+    - name: Enable and start node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+      tags: [monitoring]
+
+    - name: Open firewall port 9100 for node_exporter (RedHat/Rocky)
+      ansible.posix.firewalld:
+        port: 9100/tcp
+        permanent: true
+        state: enabled
+        immediate: true
+      when: ansible_os_family == "RedHat"
+      failed_when: false
+      tags: [monitoring]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify hostname and DC connectivity
+    # -------------------------------------------------------------------
+    - name: Verify static hostname
+      ansible.builtin.shell: hostnamectl --static
+      register: static_hostname
+      changed_when: false
+      tags: [validate]
+
+    - name: Show hostname result
+      ansible.builtin.debug:
+        msg: "Static hostname: {{ static_hostname.stdout | trim }}"
+      tags: [validate]
+
+    - name: Verify DC reachability
+      ansible.builtin.shell: ping -c 2 -W 2 {{ lab_dns_primary | default('10.10.10.10') }}
+      register: dc_ping
+      changed_when: false
+      failed_when: false
+      tags: [validate]
+
+    - name: Show DC ping result
+      ansible.builtin.debug:
+        msg: "{{ 'DC at ' + (lab_dns_primary | default('10.10.10.10')) + ' is reachable' if dc_ping.rc == 0 else 'WARNING: DC at ' + (lab_dns_primary | default('10.10.10.10')) + ' is NOT reachable' }}"
+      tags: [validate]
+
+    - name: Show chrony sync status
+      ansible.builtin.shell: chronyc tracking
+      register: chrony_tracking
+      changed_when: false
+      tags: [validate]
+
+    - name: Display chrony tracking output
+      ansible.builtin.debug:
+        var: chrony_tracking.stdout_lines
+      tags: [validate]

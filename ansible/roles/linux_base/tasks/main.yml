@@ -1,0 +1,118 @@
+---
+# =======================================================================
+# Role: linux_base — tasks/main.yml
+# =======================================================================
+# Reusable role for base Linux configuration applicable to all lab Linux
+# VMs. Supports both Debian/Ubuntu and RedHat/Rocky Linux families.
+#
+# Tasks performed:
+#   1. Update package cache and upgrade packages
+#   2. Install common utility packages
+#   3. Configure chrony NTP pointing at the lab NTP server
+#   4. Set timezone (default: Europe/Berlin)
+#   5. Harden SSH configuration
+#
+# Variables (override in defaults/main.yml, group_vars or playbook vars):
+#   ntp_server  – IP of the NTP server (default: lab_ntp_server or 10.10.10.10)
+#   timezone    – timezone string for tzdata (default: Europe/Berlin)
+#
+# Usage in a playbook:
+#   - name: Base Linux setup
+#     hosts: clients_linux
+#     gather_facts: true
+#     become: true
+#     roles:
+#       - linux_base
+# =======================================================================
+
+- name: Update apt package cache (Debian/Ubuntu)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: Upgrade all packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    upgrade: dist
+  when: ansible_os_family == "Debian"
+
+- name: Update all packages via dnf (RedHat/Rocky)
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+  when: ansible_os_family == "RedHat"
+
+- name: Install common packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - git
+      - curl
+      - wget
+      - vim
+      - chrony
+      - ca-certificates
+      - net-tools
+      - htop
+      - unzip
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install common packages (RedHat/Rocky)
+  ansible.builtin.dnf:
+    name:
+      - git
+      - curl
+      - wget
+      - vim
+      - chrony
+      - ca-certificates
+      - net-tools
+      - htop
+      - unzip
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Configure chrony NTP server
+  ansible.builtin.lineinfile:
+    path: /etc/chrony.conf
+    regexp: "^server {{ ntp_server }}"
+    line: "server {{ ntp_server }} iburst"
+    insertafter: "^# Use public servers"
+    state: present
+  notify: restart chrony
+
+- name: Enable and start chrony
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Harden SSH — PermitRootLogin no
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PermitRootLogin"
+    line: "PermitRootLogin no"
+    state: present
+  notify: restart sshd
+
+# NOTE: PasswordAuthentication is set to yes for lab convenience.
+# Change to no and use SSH key distribution for production environments.
+- name: Harden SSH — PasswordAuthentication yes (lab mode)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?PasswordAuthentication"
+    line: "PasswordAuthentication yes"
+    state: present
+  notify: restart sshd
+
+- name: Harden SSH — MaxAuthTries 3
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?MaxAuthTries"
+    line: "MaxAuthTries 3"
+    state: present
+  notify: restart sshd

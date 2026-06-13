@@ -1,0 +1,272 @@
+---
+# =======================================================================
+# Secondary Domain Controller Playbook
+# =======================================================================
+# Configures lab-dc02 (VM 105, 10.10.10.11) as an additional Domain
+# Controller for lab.local, providing AD replication and DNS redundancy.
+#
+# Prerequisites:
+#   - lab-dc01 is running and the lab.local domain is fully operational
+#   - DNS on lab-dc01 (10.10.10.10) is reachable from lab-dc02
+#   - Windows Server 2022 is installed on lab-dc02
+#   - WinRM is enabled on lab-dc02 (run winrm quickconfig -y)
+#   - Terraform toggle: enable_dc02 = true (VM 105)
+#   - Inventory lab.yml has the dc02 group uncommented with lab-dc02
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/dc02.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/dc02.yml --tags rename,network
+#   ansible-playbook -i inventory/lab.yml playbooks/dc02.yml --tags validate
+#
+# What this playbook does:
+#   1. Renames the computer to LAB-DC02
+#   2. Sets static IP 10.10.10.11, gateway 10.10.10.1, DNS 10.10.10.10
+#   3. Installs AD DS, DNS and RSAT management tools
+#   4. Promotes the server as an additional DC for lab.local
+#   5. Reboots and validates AD replication with repadmin/dcdiag
+# =======================================================================
+
+- name: Configure Secondary Domain Controller – lab-dc02
+  hosts: dc02
+  gather_facts: false
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check (always runs regardless of tags)
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      changed_when: false
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    - name: Get domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: current_domain
+      changed_when: false
+      tags: [info]
+
+    - name: Show domain status
+      ansible.builtin.debug:
+        msg: "Current domain/workgroup: {{ current_domain.stdout | trim }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename computer to LAB-DC02
+    # -------------------------------------------------------------------
+    - name: Rename computer to LAB-DC02
+      ansible.windows.win_hostname:
+        name: LAB-DC02
+      register: rename_result
+      when: current_hostname.stdout | trim | upper != "LAB-DC02"
+      tags: [rename]
+
+    - name: Reboot after rename
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    - name: Wait for WinRM after rename reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    # -------------------------------------------------------------------
+    # Tag: network — static IP, gateway and DNS pointing at DC01
+    # -------------------------------------------------------------------
+    - name: Configure static IP address
+      ansible.windows.win_shell: |
+        $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        $desired  = "{{ lab_dns_secondary | default('10.10.10.11') }}"
+        $existing = Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                    Where-Object { $_.IPAddress -eq $desired }
+        if (-not $existing) {
+            Remove-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-NetRoute     -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            New-NetIPAddress -InterfaceAlias $adapter.Name `
+                -IPAddress $desired `
+                -PrefixLength 24 `
+                -DefaultGateway "{{ lab_gateway | default('10.10.10.1') }}" | Out-Null
+        }
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+            -ServerAddresses "{{ lab_dns_primary | default('10.10.10.10') }}"
+      tags: [network]
+
+    - name: Verify DC01 is reachable
+      ansible.windows.win_shell: |
+        Test-Connection -ComputerName "{{ lab_dns_primary | default('10.10.10.10') }}" -Count 2 -Quiet
+      register: dc_ping
+      changed_when: false
+      tags: [network]
+
+    - name: Fail if DC01 is not reachable
+      ansible.builtin.fail:
+        msg: >-
+          Cannot reach primary DC at {{ lab_dns_primary | default('10.10.10.10') }}.
+          lab-dc01 must be running and lab.local must be operational before promoting DC02.
+      when: dc_ping.stdout | trim | lower == "false"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: features — install AD DS, DNS and RSAT tools
+    # -------------------------------------------------------------------
+    - name: Install AD-Domain-Services, DNS and RSAT features
+      ansible.windows.win_feature:
+        name:
+          - AD-Domain-Services
+          - DNS
+          - RSAT-AD-Tools
+          - RSAT-AD-PowerShell
+          - RSAT-DNS-Server
+        include_management_tools: true
+        state: present
+      register: features_result
+      tags: [features]
+
+    - name: Show feature installation result
+      ansible.builtin.debug:
+        msg: "Features installed. Reboot required: {{ features_result.reboot_required | default(false) }}"
+      tags: [features]
+
+    - name: Reboot if required after feature install
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: features_result.reboot_required | default(false)
+      tags: [features]
+
+    - name: Wait for WinRM after feature reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: features_result.reboot_required | default(false)
+      tags: [features]
+
+    # -------------------------------------------------------------------
+    # Tag: promote — promote as an additional DC for lab.local
+    # Guard: skip if already a DC (Get-ADDomainController returns the host)
+    # -------------------------------------------------------------------
+    - name: Check if this server is already a Domain Controller
+      ansible.windows.win_shell: |
+        try {
+            $dc = Get-ADDomainController -Identity $env:COMPUTERNAME -ErrorAction Stop
+            Write-Output $dc.Name
+        } catch {
+            Write-Output "NOT_DC"
+        }
+      register: dc_check
+      changed_when: false
+      tags: [promote]
+
+    - name: Show DC check result
+      ansible.builtin.debug:
+        msg: "DC check: {{ dc_check.stdout | trim }}"
+      tags: [promote]
+
+    - name: Promote server as additional Domain Controller for lab.local
+      ansible.windows.win_shell: |
+        $securePass = ConvertTo-SecureString "{{ domain_join_password }}" -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("{{ domain_join_user }}", $securePass)
+        $secureDsrm = ConvertTo-SecureString "{{ safe_mode_password }}" -AsPlainText -Force
+        Install-ADDSDomainController `
+            -DomainName "{{ lab_domain | default('lab.local') }}" `
+            -InstallDns:$true `
+            -Credential $cred `
+            -SafeModeAdministratorPassword $secureDsrm `
+            -NoRebootOnCompletion:$false `
+            -Force:$true
+      async: 600
+      poll: 0
+      when: '"NOT_DC" in dc_check.stdout'
+      register: promotion_job
+      tags: [promote]
+
+    - name: Wait for DC to reboot after promotion
+      ansible.builtin.wait_for_connection:
+        delay: 90
+        timeout: 600
+        sleep: 20
+      when: '"NOT_DC" in dc_check.stdout'
+      tags: [promote]
+
+    - name: Skip message — already a Domain Controller
+      ansible.builtin.debug:
+        msg: "LAB-DC02 is already a Domain Controller ({{ dc_check.stdout | trim }}). Skipping promotion."
+      when: '"NOT_DC" not in dc_check.stdout'
+      tags: [promote]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify AD replication health
+    # -------------------------------------------------------------------
+    - name: Wait for AD services to initialise after promotion
+      ansible.windows.win_shell: |
+        $waited = 0
+        do {
+            try {
+                $dc = Get-ADDomainController -Identity $env:COMPUTERNAME -ErrorAction Stop
+                Write-Output "Ready: $($dc.Name)"
+                exit 0
+            } catch {
+                Start-Sleep -Seconds 15
+                $waited += 15
+            }
+        } while ($waited -lt 180)
+        Write-Output "AD DC service did not become ready in time"
+        exit 1
+      register: ad_ready
+      changed_when: false
+      tags: [validate]
+
+    - name: Show AD ready status
+      ansible.builtin.debug:
+        var: ad_ready.stdout_lines
+      tags: [validate]
+
+    - name: Check replication summary with repadmin
+      ansible.windows.win_shell: repadmin /replsummary
+      register: repadmin_result
+      changed_when: false
+      failed_when: false
+      tags: [validate]
+
+    - name: Show repadmin output
+      ansible.builtin.debug:
+        var: repadmin_result.stdout_lines
+      tags: [validate]
+
+    - name: Run dcdiag replication test
+      ansible.windows.win_shell: dcdiag /test:replications /s:LAB-DC02
+      register: dcdiag_result
+      changed_when: false
+      failed_when: false
+      tags: [validate]
+
+    - name: Show dcdiag output
+      ansible.builtin.debug:
+        var: dcdiag_result.stdout_lines
+      tags: [validate]

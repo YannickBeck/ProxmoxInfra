@@ -1,0 +1,21 @@
+# =======================================================================
+# Ansible Galaxy Collection Requirements — ProxmoxInfra Lab
+# =======================================================================
+# Install all required collections before running any playbook:
+#
+#   ansible-galaxy collection install -r requirements.yml
+#
+# To upgrade existing collections to the latest compatible version:
+#   ansible-galaxy collection install -r requirements.yml --upgrade
+# =======================================================================
+
+---
+collections:
+  - name: ansible.windows
+    version: ">=2.0.0"
+
+  - name: community.windows
+    version: ">=2.0.0"
+
+  - name: community.general
+    version: ">=8.0.0"

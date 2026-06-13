@@ -122,3 +122,27 @@ enable_aadconnect = false
 # update baseline. The disk appears as scsi2 and is initialized as E:\WSUS
 # by setup-wsus-sup.ps1.
 wsus_content_disk_size = 0
+
+# -----------------------------------------------------------------------
+# OPNsense (alternative to pfSense — mutually exclusive)
+# -----------------------------------------------------------------------
+# Download OPNsense ISO from https://opnsense.org/download/ (DVD image, amd64)
+# NOTE: Do NOT enable both enable_pfsense and enable_opnsense simultaneously.
+enable_opnsense = false
+opnsense_iso    = "OPNsense-24.7-dvd-amd64.iso"
+
+# -----------------------------------------------------------------------
+# Additional Windows 11 client (lab-client02, VM 108)
+# -----------------------------------------------------------------------
+enable_client02 = false
+
+# -----------------------------------------------------------------------
+# Linux clients (Ubuntu 22.04 and/or Rocky Linux 9)
+# -----------------------------------------------------------------------
+# Download Ubuntu 22.04 LTS: https://ubuntu.com/download/server
+# Download Rocky Linux 9:    https://rockylinux.org/download
+# linux_client_count: 1 = Ubuntu only, 2 = Ubuntu + Rocky Linux
+enable_linux_client = false
+linux_client_count  = 1
+ubuntu_iso          = "ubuntu-22.04.4-live-server-amd64.iso"
+rocky_iso           = "Rocky-9.4-x86_64-dvd.iso"

@@ -1,0 +1,20 @@
+---
+# =======================================================================
+# Role: domain_join — defaults/main.yml
+# =======================================================================
+# All variables for this role come from group_vars/all/main.yml (plain)
+# and group_vars/all/vault.yml (encrypted secrets).
+# No override defaults are needed here; the file exists to satisfy the
+# standard role directory layout and to document which variables are used.
+#
+# Variables resolved at runtime from group_vars:
+#   lab_domain          – "lab.local"
+#   domain_join_user    – vault_domain_join_user   (e.g. "LAB\Administrator")
+#   domain_join_password – vault_domain_join_password
+#
+# Optional variable you can set in your playbook or host_vars:
+#   domain_ou_path      – OU distinguished name for the computer object
+#                         e.g. "OU=Servers,DC=lab,DC=local"
+#                         If omitted, the computer is placed in the
+#                         default Computers container.
+# =======================================================================

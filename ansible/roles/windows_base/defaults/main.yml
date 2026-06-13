@@ -1,0 +1,23 @@
+---
+# =======================================================================
+# Role: windows_base — defaults/main.yml
+# =======================================================================
+# Default variable values. Override in your playbook vars: block,
+# host_vars, or group_vars as needed.
+#
+# IMPORTANT: target_hostname and target_ip have no sensible defaults —
+# you must provide them when using this role.
+# =======================================================================
+
+# Target computer name. Must be provided; "CHANGEME" serves as a reminder.
+target_hostname: "CHANGEME"
+
+# Target static IPv4 address. Leave empty ("") to skip IP configuration.
+target_ip: ""
+
+# Primary DNS server for this host. Falls back to lab_dns_primary from
+# group_vars/all/main.yml if not set.
+target_dns: "{{ lab_dns_primary | default('10.10.10.10') }}"
+
+# IPv4 subnet prefix length (24 = /24 = 255.255.255.0)
+target_prefix: 24

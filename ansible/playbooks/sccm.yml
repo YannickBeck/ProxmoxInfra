@@ -3,23 +3,33 @@
 # SCCM Prerequisites Playbook
 # =======================================================================
 # Configures lab-sccm01 with all prerequisites required for SCCM
-# Current Branch installation.
+# Current Branch installation, including:
+#   - Windows features (IIS, BITS, .NET, RSAT)
+#   - SQL Server 2022 Evaluation (silent install)
+#   - Windows ADK + WinPE Add-on (silent install)
+#   - Domain join
+#   - Firewall rules
 #
 # Prerequisites:
 #   - lab-dc01 is running and the lab.local domain is available
 #   - Windows Server 2022 is installed on lab-sccm01
 #   - WinRM is enabled on lab-sccm01
 #   - Inventory lab.yml is configured with SCCM VM credentials
+#   - Ansible Vault: inventory/group_vars/all/vault.yml must exist
+#     (admin_password, domain_join_user, domain_join_password resolved
+#     via group_vars/all/main.yml)
 #
 # Usage:
 #   ansible-playbook -i inventory/lab.yml playbooks/sccm.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/sccm.yml --tags sql
+#   ansible-playbook -i inventory/lab.yml playbooks/sccm.yml --tags adk
 #
-# IMPORTANT: This playbook installs SCCM prerequisites only.
-# After this playbook completes, you must manually:
-#   1. Install SQL Server 2019/2022
-#   2. Download Windows ADK + WinPE Add-on and install
-#   3. Download SCCM CB Evaluation and run Setup
-#   See infrastructure/vms/sccm/README.md for the full guide.
+# IMPORTANT: After this playbook completes, you must manually:
+#   1. Download SCCM CB Evaluation and run Setup
+#      - Extend AD Schema first: C:\SCCM_Sources\SCCM_Setup\SMSSETUP\BIN\X64\extadsch.exe
+#      - Run: C:\SCCM_Sources\SCCM_Setup\splash.hta
+#      - Site Code: LAB  |  Site Name: Lab Demo
+#   See infrastructure/vms/sccm/README.md for the full step-by-step guide.
 # =======================================================================
 
 - name: Configure SCCM Prerequisites – lab-sccm01
@@ -27,12 +37,29 @@
   gather_facts: false
 
   vars:
-    sccm_script_src: "../../infrastructure/vms/sccm/powershell/setup-sccm-prereqs.ps1"
+    sccm_script_src:  "../../infrastructure/vms/sccm/powershell/setup-sccm-prereqs.ps1"
     sccm_script_dest: "C:\\Windows\\Temp\\setup-sccm-prereqs.ps1"
 
-    # Domain join credential — prompt at runtime for security
-    # Or set domain_admin_user and domain_admin_password in the inventory
-    domain_admin: "LAB\\Administrator"
+    # Domain join credentials — resolved from vault via group_vars/all/main.yml
+    # domain_join_user     → vault_domain_join_user
+    # domain_join_password → vault_domain_join_password
+    # admin_password       → vault_admin_password
+
+    # SQL Server 2022 Evaluation ISO download URL (Microsoft official)
+    sql_iso_url:  "https://go.microsoft.com/fwlink/p/?linkid=2215158"
+    sql_iso_dest: "C:\\SCCM_Sources\\SQLServer\\SQL2022.iso"
+    sql_install_path: "C:\\Program Files\\Microsoft SQL Server"
+
+    # Windows ADK for Windows 11 (matches Server 2022 / Win11 22H2 era)
+    # NOTE: ADK version must match your SCCM CB version.
+    # CB 2309+ requires ADK 11 (build 22621). Check before upgrading SCCM.
+    adk_setup_url:   "https://go.microsoft.com/fwlink/?linkid=2243391"
+    adk_setup_dest:  "C:\\SCCM_Sources\\ADK\\adksetup.exe"
+    adk_install_path: "C:\\Program Files (x86)\\Windows Kits\\10"
+
+    # Windows ADK WinPE Add-on (required for OS deployment / boot images)
+    adkwinpe_setup_url:  "https://go.microsoft.com/fwlink/?linkid=2243390"
+    adkwinpe_setup_dest: "C:\\SCCM_Sources\\ADK\\adkwinpesetup.exe"
 
   tasks:
 
@@ -93,7 +120,7 @@
         New-NetIPAddress -InterfaceAlias $adapter.Name `
             -IPAddress "{{ lab_sccm_ip | default('10.10.10.20') }}" `
             -PrefixLength 24 `
-            -DefaultGateway "10.10.10.1"
+            -DefaultGateway "{{ lab_gateway | default('10.10.10.1') }}"
         Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
             -ServerAddresses "{{ lab_dc_ip | default('10.10.10.10') }}"
       tags: [network]
@@ -115,10 +142,10 @@
 
     - name: Join domain lab.local
       ansible.windows.win_domain_membership:
-        dns_domain_name: "{{ domain_name | default('lab.local') }}"
-        domain_admin_user: "{{ domain_admin }}"
-        domain_admin_password: "{{ hostvars[inventory_hostname]['ansible_password'] }}"
-        domain_ou_path: "OU=Servers,DC=lab,DC=local"
+        dns_domain_name:      "{{ lab_domain | default('lab.local') }}"
+        domain_admin_user:    "{{ domain_join_user }}"
+        domain_admin_password: "{{ domain_join_password }}"
+        domain_ou_path:       "OU=Servers,DC=lab,DC=local"
         state: domain
       register: domain_join_result
       tags: [domain_join]
@@ -260,17 +287,147 @@
         dest: "{{ sccm_script_dest }}"
       tags: [prereqs_script]
 
+    # -------------------------------------------------------------------
+    # Tag: sql — download and silently install SQL Server 2022 Evaluation
+    # -------------------------------------------------------------------
+    # Guard: skip the entire SQL block if SQL Server is already installed
+    - name: Check if SQL Server is already installed
+      ansible.windows.win_stat:
+        path: "{{ sql_install_path }}"
+      register: sql_installed
+      tags: [sql]
+
+    - name: Download SQL Server 2022 Evaluation ISO
+      ansible.windows.win_get_url:
+        url:  "{{ sql_iso_url }}"
+        dest: "{{ sql_iso_dest }}"
+        # The download is ~1.5 GB — extend timeout accordingly
+        timeout: 3600
+      when: not sql_installed.stat.exists
+      tags: [sql]
+
+    - name: Mount SQL Server 2022 ISO
+      ansible.windows.win_shell: |
+        $mount = Mount-DiskImage -ImagePath "{{ sql_iso_dest }}" -PassThru
+        $drive = ($mount | Get-Volume).DriveLetter
+        Write-Output $drive
+      register: sql_mount
+      when: not sql_installed.stat.exists
+      tags: [sql]
+
+    - name: Install SQL Server 2022 silently
+      ansible.windows.win_package:
+        path:       "{{ sql_mount.stdout | trim }}:\\setup.exe"
+        product_id: "{SQL2022}"          # Placeholder — win_package accepts any id for MSI; for EXE use creates_path guard
+        arguments: >-
+          /Q
+          /IACCEPTSQLSERVERLICENSETERMS
+          /ACTION=Install
+          /FEATURES=SQLENGINE
+          /INSTANCENAME=MSSQLSERVER
+          /SQLSVCACCOUNT="NT AUTHORITY\SYSTEM"
+          /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+          /SQLCOLLATION=SQL_Latin1_General_CP1_CI_AS
+          /TCPENABLED=1
+          /NPENABLED=1
+          /UPDATEENABLED=False
+        creates_path: "{{ sql_install_path }}"
+        state: present
+      when: not sql_installed.stat.exists
+      register: sql_install_result
+      tags: [sql]
+
+    - name: Dismount SQL Server 2022 ISO
+      ansible.windows.win_shell: |
+        Dismount-DiskImage -ImagePath "{{ sql_iso_dest }}" -ErrorAction SilentlyContinue
+      when: not sql_installed.stat.exists
+      tags: [sql]
+
+    - name: Show SQL Server installation result
+      ansible.builtin.debug:
+        msg: "SQL Server install: {{ sql_installed.stat.exists | ternary('already present — skipped', 'installed this run') }}"
+      tags: [sql]
+
+    # -------------------------------------------------------------------
+    # Tag: adk — download and silently install Windows ADK + WinPE Add-on
+    # -------------------------------------------------------------------
+    # ADK version must match your SCCM CB version.
+    # CB 2303 / 2309 → ADK for Windows 11 build 22621 (adksetup.exe from link below)
+    # Check https://learn.microsoft.com/en-us/mem/configmgr/core/plan-design/configs/support-for-windows-adk
+    # before upgrading SCCM to confirm the required ADK version.
+
+    - name: Check if Windows ADK is already installed
+      ansible.windows.win_stat:
+        path: "{{ adk_install_path }}"
+      register: adk_installed
+      tags: [adk]
+
+    - name: Download Windows ADK setup
+      ansible.windows.win_get_url:
+        url:  "{{ adk_setup_url }}"
+        dest: "{{ adk_setup_dest }}"
+        timeout: 600
+      when: not adk_installed.stat.exists
+      tags: [adk]
+
+    - name: Install Windows ADK silently (Deployment Tools + USMT)
+      ansible.windows.win_shell: |
+        & "{{ adk_setup_dest }}" /quiet /norestart `
+            /features OptionId.DeploymentTools OptionId.UserStateMigrationTool
+        exit $LASTEXITCODE
+      args:
+        creates: "{{ adk_install_path }}"
+      when: not adk_installed.stat.exists
+      register: adk_install_result
+      tags: [adk]
+
+    - name: Show ADK installation result
+      ansible.builtin.debug:
+        msg: "Windows ADK install: {{ adk_installed.stat.exists | ternary('already present — skipped', 'installed this run') }}"
+      tags: [adk]
+
+    - name: Check if Windows ADK WinPE Add-on is already installed
+      ansible.windows.win_stat:
+        path: "{{ adk_install_path }}\\Assessment and Deployment Kit\\Windows Preinstallation Environment"
+      register: adkwinpe_installed
+      tags: [adk]
+
+    - name: Download Windows ADK WinPE Add-on setup
+      ansible.windows.win_get_url:
+        url:  "{{ adkwinpe_setup_url }}"
+        dest: "{{ adkwinpe_setup_dest }}"
+        timeout: 600
+      when: not adkwinpe_installed.stat.exists
+      tags: [adk]
+
+    - name: Install Windows ADK WinPE Add-on silently
+      ansible.windows.win_shell: |
+        & "{{ adkwinpe_setup_dest }}" /quiet /norestart `
+            /features OptionId.WindowsPreinstallationEnvironment
+        exit $LASTEXITCODE
+      args:
+        creates: "{{ adk_install_path }}\\Assessment and Deployment Kit\\Windows Preinstallation Environment"
+      when: not adkwinpe_installed.stat.exists
+      register: adkwinpe_install_result
+      tags: [adk]
+
+    - name: Show ADK WinPE Add-on installation result
+      ansible.builtin.debug:
+        msg: "ADK WinPE Add-on install: {{ adkwinpe_installed.stat.exists | ternary('already present — skipped', 'installed this run') }}"
+      tags: [adk]
+
+    # -------------------------------------------------------------------
+    # Always: print manual next steps
+    # -------------------------------------------------------------------
     - name: Note — manual steps required after this playbook
       ansible.builtin.debug:
         msg: |
           SCCM Prerequisites playbook complete.
 
           NEXT MANUAL STEPS (must be done on lab-sccm01):
-          1. Install SQL Server 2019/2022 (place installer in C:\SCCM_Sources\SQLServer\)
-             - Use collation: SQL_Latin1_General_CP1_CI_AS
-             - Service account: LAB\svc-sccm
-          2. Install Windows ADK + WinPE Add-on:
-             https://learn.microsoft.com/en-us/windows-hardware/get-started/adk-install
+          1. SQL Server 2022 is installed at C:\Program Files\Microsoft SQL Server
+             - Service account: LAB\svc-sccm (configure via SQL Server Configuration Manager)
+          2. Windows ADK + WinPE Add-on installed at C:\Program Files (x86)\Windows Kits\10
           3. Download SCCM CB Evaluation to C:\SCCM_Sources\SCCM_Setup\:
              https://www.microsoft.com/en-us/evalcenter/evaluate-microsoft-endpoint-configuration-manager
           4. Extend AD Schema: run C:\SCCM_Sources\SCCM_Setup\SMSSETUP\BIN\X64\extadsch.exe

@@ -153,3 +153,59 @@ variable "pfsense_iso" {
   default     = "pfSense-CE-2.7.2-RELEASE-amd64.iso"
   description = "Filename of the pfSense CE installer ISO in Proxmox local storage. Download from https://www.pfsense.org/download/."
 }
+
+# -----------------------------------------------------------------------
+# OPNsense (alternative router/firewall to pfSense — mutually exclusive)
+# -----------------------------------------------------------------------
+variable "enable_opnsense" {
+  type        = bool
+  default     = false
+  description = "Create VM 107 (lab-opnsense01), OPNsense CE router/firewall. Mutually exclusive with enable_pfsense — only one gateway can own 10.10.10.1."
+}
+
+variable "opnsense_iso" {
+  type        = string
+  default     = "OPNsense-24.7-dvd-amd64.iso"
+  description = "Filename of the OPNsense installer ISO in Proxmox local storage. Download from https://opnsense.org/download/."
+}
+
+# -----------------------------------------------------------------------
+# Additional Windows client (lab-client02)
+# -----------------------------------------------------------------------
+variable "enable_client02" {
+  type        = bool
+  default     = false
+  description = "Create VM 108 (lab-client02), a second Windows 11 Enterprise Evaluation client for multi-client SCCM and Intune testing."
+}
+
+# -----------------------------------------------------------------------
+# Linux clients (Ubuntu 22.04 + optionally Rocky Linux 9)
+# -----------------------------------------------------------------------
+variable "enable_linux_client" {
+  type        = bool
+  default     = false
+  description = "Create Linux client VM(s). When linux_client_count = 1, only lab-linux01 (Ubuntu 22.04, VM 110) is created. When 2, also lab-linux02 (Rocky Linux 9, VM 111)."
+}
+
+variable "linux_client_count" {
+  type        = number
+  default     = 1
+  description = "Number of Linux client VMs to create when enable_linux_client = true. 1 = Ubuntu only (VM 110). 2 = Ubuntu + Rocky Linux (VMs 110+111)."
+
+  validation {
+    condition     = var.linux_client_count >= 1 && var.linux_client_count <= 2
+    error_message = "linux_client_count must be 1 or 2."
+  }
+}
+
+variable "ubuntu_iso" {
+  type        = string
+  default     = "ubuntu-22.04.4-live-server-amd64.iso"
+  description = "Filename of the Ubuntu 22.04 LTS ISO in Proxmox local storage. Download from https://ubuntu.com/download/server."
+}
+
+variable "rocky_iso" {
+  type        = string
+  default     = "Rocky-9.4-x86_64-dvd.iso"
+  description = "Filename of the Rocky Linux 9 DVD ISO in Proxmox local storage. Download from https://rockylinux.org/download."
+}

@@ -1,0 +1,70 @@
+---
+# =======================================================================
+# Role: domain_join — tasks/main.yml
+# =======================================================================
+# Reusable role that domain-joins a Windows host to lab.local.
+# Idempotent: skips the join if the host is already a domain member.
+#
+# Variables (all resolved from group_vars/all unless overridden):
+#   lab_domain          – domain DNS name (default: lab.local)
+#   domain_join_user    – domain admin UPN or SAM (e.g. LAB\Administrator)
+#   domain_join_password – password for the domain admin account
+#   domain_ou_path      – OU to place the computer object in (optional)
+#
+# Usage in a playbook:
+#   - name: Join lab.local
+#     hosts: sccm
+#     gather_facts: false
+#     roles:
+#       - domain_join
+#
+#   # Or with an explicit OU override:
+#   - name: Join lab.local (Servers OU)
+#     hosts: sccm
+#     gather_facts: false
+#     vars:
+#       domain_ou_path: "OU=Servers,DC=lab,DC=local"
+#     roles:
+#       - domain_join
+# =======================================================================
+
+- name: Check current domain membership
+  ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+  register: _dj_domain_status
+  changed_when: false
+
+- name: Show current domain status
+  ansible.builtin.debug:
+    msg: "Current domain/workgroup: {{ _dj_domain_status.stdout | trim }}"
+
+- name: Join domain {{ lab_domain | default('lab.local') }}
+  ansible.windows.win_domain_membership:
+    dns_domain_name: "{{ lab_domain | default('lab.local') }}"
+    domain_admin_user: "{{ domain_join_user }}"
+    domain_admin_password: "{{ domain_join_password }}"
+    domain_ou_path: "{{ domain_ou_path | default(omit) }}"
+    state: domain
+  register: _dj_join_result
+  when: _dj_domain_status.stdout | trim | lower != (lab_domain | default('lab.local') | lower)
+
+- name: Reboot to complete domain join
+  ansible.windows.win_reboot:
+    reboot_timeout: 300
+    post_reboot_delay: 30
+  when: _dj_join_result.reboot_required | default(false)
+
+- name: Wait for WinRM after domain-join reboot
+  ansible.builtin.wait_for_connection:
+    delay: 30
+    timeout: 300
+    sleep: 10
+  when: _dj_join_result.reboot_required | default(false)
+
+- name: Confirm domain membership after join
+  ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+  register: _dj_confirm
+  changed_when: false
+
+- name: Show confirmed domain
+  ansible.builtin.debug:
+    msg: "Domain membership confirmed: {{ _dj_confirm.stdout | trim }}"

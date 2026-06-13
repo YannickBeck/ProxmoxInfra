@@ -1,0 +1,17 @@
+# =======================================================================
+# group_vars/windows.yml — WinRM Defaults for All Windows Hosts
+# =======================================================================
+# These settings apply to every host in the `windows` group (and all its
+# child groups: dc, dc02, sccm, ca, aadconnect, clients_win).
+# Per-host or per-subgroup overrides in the inventory take precedence.
+# =======================================================================
+
+---
+ansible_connection:                    winrm
+ansible_winrm_scheme:                  http
+ansible_winrm_port:                    5985
+ansible_winrm_transport:               ntlm
+ansible_winrm_server_cert_validation:  ignore
+ansible_winrm_operation_timeout_sec:   120
+ansible_winrm_read_timeout_sec:        150
+ansible_python_interpreter:            auto

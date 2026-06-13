@@ -1,104 +1,154 @@
----
 # =======================================================================
-# Ansible Inventory – ProxmoxInfra Windows Lab
+# Ansible Inventory — ProxmoxInfra Windows Lab
 # =======================================================================
-# Copy this file to lab.yml and fill in your actual values.
-# lab.yml is excluded from git (.gitignore) to prevent committing
-# credentials.
+# Copy this file to lab.yml and fill in your actual values:
 #
-# Usage:
 #   cp inventory/lab.yml.example inventory/lab.yml
 #   nano inventory/lab.yml
+#
+# lab.yml is excluded from git (.gitignore) to prevent committing credentials.
+#
+# PASSWORDS:
+#   ansible_password references {{ admin_password }} which is resolved from
+#   inventory/group_vars/all/main.yml -> vault.yml (ansible-vault encrypted).
+#   To create the vault:
+#     cp inventory/group_vars/all/vault.yml.example \
+#        inventory/group_vars/all/vault.yml
+#     ansible-vault encrypt inventory/group_vars/all/vault.yml
+#
+# OPTIONAL HOSTS:
+#   Hosts marked "optional" are disabled by default.  Enable them by
+#   setting the corresponding toggle in terraform.tfvars and then
+#   uncommenting the host entry here.
+#
+# USAGE:
+#   ansible-playbook -i inventory/lab.yml playbooks/site.yml
 #   ansible-playbook -i inventory/lab.yml playbooks/dc.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/dc.yml --tags validate
 # =======================================================================
 
 all:
   children:
 
-    # -------------------------------------------------------------------
-    # Domain Controller
-    # -------------------------------------------------------------------
-    dc:
-      hosts:
-        lab-dc01:
-          # IP address of the DC VM.
-          # Before AD is set up: use the IP set during OS installation.
-          # After AD: still use IP to avoid DNS dependency.
-          ansible_host: 10.10.10.10
+    # =======================================================================
+    # WINDOWS HOSTS
+    # All inherit WinRM defaults from group_vars/windows.yml
+    # =======================================================================
+    windows:
+      children:
 
-          # WinRM connection settings
-          ansible_connection: winrm
-          ansible_winrm_scheme: http
-          ansible_winrm_port: 5985
+        # -------------------------------------------------------------------
+        # Primary Domain Controller (required)
+        # Terraform toggle: always enabled (VM 101)
+        # -------------------------------------------------------------------
+        dc:
+          hosts:
+            lab-dc01:
+              ansible_host: 10.10.10.10
+              # Use the local Administrator account before and after domain
+              # promotion.  Switch to kerberos transport after domain join
+              # if Kerberos is available in your environment.
+              ansible_user: Administrator
+              ansible_password: "{{ admin_password }}"
 
-          # Use NTLM before domain join (local Administrator account)
-          # Switch to kerberos after domain join if desired
-          ansible_winrm_transport: ntlm
+        # -------------------------------------------------------------------
+        # Secondary Domain Controller (optional)
+        # Terraform toggle: enable_dc02 = true (VM 105)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        dc02:
+          hosts:
+            # lab-dc02:
+            #   ansible_host: 10.10.10.11
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
 
-          # Don't validate self-signed certificates (not relevant for HTTP)
-          ansible_winrm_server_cert_validation: ignore
+        # -------------------------------------------------------------------
+        # SCCM + SQL Server (required)
+        # Terraform toggle: always enabled (VM 102)
+        # -------------------------------------------------------------------
+        sccm:
+          hosts:
+            lab-sccm01:
+              ansible_host: 10.10.10.20
+              ansible_user: Administrator
+              ansible_password: "{{ admin_password }}"
 
-          # Credentials — change these to match your VM setup
-          # Use the local Administrator account before domain promotion
-          ansible_user: Administrator
-          ansible_password: "YourAdminPassword123!"    # Change this
+        # -------------------------------------------------------------------
+        # Enterprise Root CA (optional)
+        # Terraform toggle: enable_ca = true (VM 104)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        ca:
+          hosts:
+            # lab-ca01:
+            #   ansible_host: 10.10.10.30
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
 
-          # Python interpreter on the managed node (Windows)
-          ansible_python_interpreter: auto
+        # -------------------------------------------------------------------
+        # Azure AD Connect / Hybrid Azure AD Join (optional)
+        # Terraform toggle: enable_aadconnect = true (VM 106)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        aadconnect:
+          hosts:
+            # lab-aadc01:
+            #   ansible_host: 10.10.10.40
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
 
-    # -------------------------------------------------------------------
-    # SCCM + SQL Server
-    # -------------------------------------------------------------------
-    sccm:
-      hosts:
-        lab-sccm01:
-          ansible_host: 10.10.10.20
-          ansible_connection: winrm
-          ansible_winrm_scheme: http
-          ansible_winrm_port: 5985
-          ansible_winrm_transport: ntlm
-          ansible_winrm_server_cert_validation: ignore
-          ansible_user: Administrator
-          ansible_password: "YourAdminPassword123!"    # Change this
-          ansible_python_interpreter: auto
+        # -------------------------------------------------------------------
+        # Windows 11 Clients
+        # lab-client01 is required; lab-client02 is optional (VM 103 / future)
+        # Terraform toggle for second client: enable_client02 = true
+        # -------------------------------------------------------------------
+        clients_win:
+          hosts:
+            lab-client01:
+              ansible_host: 10.10.10.50
+              ansible_user: Administrator
+              ansible_password: "{{ admin_password }}"
 
-          # Domain credentials (used after domain join for tasks requiring domain)
-          # domain_admin_user: "LAB\\Administrator"
-          # domain_admin_password: "YourAdminPassword123!"
+            # lab-client02:          # optional — enable_client02 = true
+            #   ansible_host: 10.10.10.51
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
 
-    # -------------------------------------------------------------------
-    # Windows 11 Client
-    # -------------------------------------------------------------------
-    clients:
-      hosts:
-        lab-client01:
-          ansible_host: 10.10.10.50      # Or the DHCP-assigned IP
-          ansible_connection: winrm
-          ansible_winrm_scheme: http
-          ansible_winrm_port: 5985
-          ansible_winrm_transport: ntlm
-          ansible_winrm_server_cert_validation: ignore
-          ansible_user: Administrator
-          ansible_password: "YourAdminPassword123!"    # Change this
-          ansible_python_interpreter: auto
+    # =======================================================================
+    # LINUX HOSTS
+    # All inherit SSH defaults from group_vars/linux.yml
+    # =======================================================================
+    linux:
+      children:
 
-  # -----------------------------------------------------------------------
-  # Group variables that apply to all Windows hosts
-  # -----------------------------------------------------------------------
-  vars:
-    # Timeout for WinRM operations (seconds)
-    ansible_winrm_operation_timeout_sec: 120
-    ansible_winrm_read_timeout_sec: 150
+        # -------------------------------------------------------------------
+        # Linux Clients (optional)
+        # Terraform toggles:
+        #   enable_linux_client = true   → lab-linux01 (Ubuntu 22.04)
+        #   linux_client_count  = 2      → also lab-linux02 (Rocky Linux 9)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        clients_linux:
+          hosts:
+            # lab-linux01:           # optional — enable_linux_client = true
+            #   ansible_host: 10.10.10.60
+            #   ansible_user: ubuntu  # default user for Ubuntu cloud images
 
-    # Domain configuration (used by playbooks)
-    domain_name: lab.local
-    domain_netbios: LAB
-    lab_dc_ip: 10.10.10.10
-    lab_sccm_ip: 10.10.10.20
+            # lab-linux02:           # optional — linux_client_count = 2
+            #   ansible_host: 10.10.10.61
+            #   ansible_user: rocky  # default user for Rocky Linux cloud images
 
-    # SCCM site configuration
-    sccm_site_code: LAB
-    sccm_site_name: "Lab Demo"
-
-    # Source directories on SCCM VM
-    sccm_sources_dir: "C:\\SCCM_Sources"
+        # -------------------------------------------------------------------
+        # OPNsense Firewall (optional)
+        # Terraform toggle: enable_opnsense = true (VM 100, LAN IP 10.10.10.1)
+        # OPNsense supports SSH management on port 22.
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        opnsense:
+          hosts:
+            # lab-opnsense01:        # optional — enable_opnsense = true
+            #   ansible_host: 10.10.10.1
+            #   ansible_user: root
+            #   ansible_connection: ssh
+            #   ansible_port: 22

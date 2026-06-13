@@ -6,16 +6,20 @@
 # begin OS installation from the attached ISO images.
 #
 # VM layout:
-#   100 – lab-fw01     : pfSense router/firewall      (optional, enable_pfsense)
-#   101 – lab-dc01     : Domain Controller (Windows Server 2022)
-#   102 – lab-sccm01   : SCCM + SQL Server (Windows Server 2022)
-#   103 – lab-client01 : Windows 11 Enterprise client
-#   104 – lab-ca01     : AD CS Enterprise Root CA      (optional, enable_ca)
-#   105 – lab-dc02     : Secondary Domain Controller   (optional, enable_dc02)
-#   106 – lab-aadc01   : Azure AD Connect server       (optional, enable_aadconnect)
+#   100 – lab-fw01      : pfSense router/firewall       (optional, enable_pfsense)
+#   101 – lab-dc01      : Domain Controller (Windows Server 2022)
+#   102 – lab-sccm01    : SCCM + SQL Server (Windows Server 2022)
+#   103 – lab-client01  : Windows 11 Enterprise client
+#   104 – lab-ca01      : AD CS Enterprise Root CA       (optional, enable_ca)
+#   105 – lab-dc02      : Secondary Domain Controller    (optional, enable_dc02)
+#   106 – lab-aadc01    : Azure AD Connect server        (optional, enable_aadconnect)
+#   107 – lab-opnsense01: OPNsense CE router/firewall    (optional, enable_opnsense; mutually exclusive with 100)
+#   108 – lab-client02  : Second Windows 11 client       (optional, enable_client02)
+#   110 – lab-linux01   : Ubuntu 22.04 LTS client        (optional, enable_linux_client)
+#   111 – lab-linux02   : Rocky Linux 9 client           (optional, enable_linux_client + linux_client_count=2)
 #
-# VMs 100/104/105/106 are opt-in extensions (see docs/extensions.md). Each
-# is guarded by a `count` based on its enable_* toggle and defaults to OFF.
+# VMs 100/104/105/106/107/108/110/111 are opt-in extensions (see docs/extensions.md).
+# Each is guarded by a `count` based on its enable_* toggle and defaults to OFF.
 # =======================================================================
 
 locals {
@@ -593,4 +597,133 @@ resource "proxmox_virtual_environment_vm" "aadconnect" {
   lifecycle {
     ignore_changes = [started]
   }
+}
+
+# -----------------------------------------------------------------------
+# VM 107 – lab-opnsense01 (OPNsense CE router/firewall)   [enable_opnsense]
+# -----------------------------------------------------------------------
+# Alternative to pfSense (VM 100). OPNsense CE provides NAT, IDS/IPS via
+# Suricata, traffic shaping, and a modern REST API for automation.
+# MUTUALLY EXCLUSIVE with pfSense: only one VM can own 10.10.10.1 (LAN).
+# Guard: this VM is NOT created if enable_pfsense is also true.
+# When deployed: remove 10.10.10.1/24 from Proxmox host vmbr1.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "opnsense" {
+  count     = var.enable_opnsense && !var.enable_pfsense ? 1 : 0
+  vm_id     = 107
+  name      = "lab-opnsense01"
+  node_name = var.proxmox_node
+
+  description = "Lab OPNsense CE router/firewall – NAT + IDS/IPS + REST API (WAN vmbr0 / LAN vmbr1 10.10.10.1)"
+
+  operating_system { type = "other" }
+  bios = "seabios"
+
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 2048 }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 16
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  cdrom { file_id = "${var.iso_storage}:iso/${var.opnsense_iso}"; interface = "ide2" }
+
+  # NIC 1 = WAN (home LAN bridge, DHCP from home router) → vtnet0
+  network_device { bridge = var.wan_bridge; model = "virtio"; enabled = true }
+  # NIC 2 = LAN (isolated lab bridge, static 10.10.10.1/24) → vtnet1
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 108 – lab-client02 (Second Windows 11 Client)         [enable_client02]
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "client02" {
+  count     = var.enable_client02 ? 1 : 0
+  vm_id     = 108
+  name      = "lab-client02"
+  node_name = var.proxmox_node
+
+  description = "Lab Windows 11 Client 2 – second managed endpoint for SCCM/Intune multi-client testing"
+
+  operating_system { type = "win11" }
+  bios = "seabios"
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 4096 }
+
+  disk { datastore_id = var.vm_storage; size = 60; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = local.win11_iso; interface = "ide2" }
+  cdrom { file_id = local.virtio_iso; interface = "ide3" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 110 – lab-linux01 (Ubuntu 22.04 LTS)          [enable_linux_client]
+# -----------------------------------------------------------------------
+# Linux client for testing cross-platform management, monitoring agents,
+# Ansible SSH workflows, and optionally AD domain join via SSSD/realm.
+# Managed by Ansible over SSH — no WinRM needed.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "linux01" {
+  count     = var.enable_linux_client ? 1 : 0
+  vm_id     = 110
+  name      = "lab-linux01"
+  node_name = var.proxmox_node
+
+  description = "Lab Ubuntu 22.04 LTS – Linux client, SSH-managed by Ansible, optional AD join via SSSD"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 2048 }
+
+  disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = "${var.iso_storage}:iso/${var.ubuntu_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 111 – lab-linux02 (Rocky Linux 9)    [enable_linux_client, count=2]
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "linux02" {
+  count     = var.enable_linux_client && var.linux_client_count >= 2 ? 1 : 0
+  vm_id     = 111
+  name      = "lab-linux02"
+  node_name = var.proxmox_node
+
+  description = "Lab Rocky Linux 9 – RHEL-compatible Linux client for enterprise Linux testing alongside Windows"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 2048 }
+
+  disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = "${var.iso_storage}:iso/${var.rocky_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
 }

@@ -1,0 +1,68 @@
+---
+# =======================================================================
+# Role: windows_base — tasks/main.yml
+# =======================================================================
+# Reusable role that covers the first two setup steps for any Windows
+# Server VM in the lab:
+#   1. Rename the computer to target_hostname (skipped if already set)
+#   2. Reboot to apply the rename
+#   3. Set a static IP, prefix-length, default gateway and DNS server
+#      (skipped if target_ip is not defined or already configured)
+#
+# Variables (set in your playbook vars: block or group_vars):
+#   target_hostname  – required – e.g. "LAB-DC02"
+#   target_ip        – required for network config – e.g. "10.10.10.11"
+#   target_prefix    – optional – subnet prefix length (default: 24)
+#   target_dns       – optional – DNS server IP (default: lab_dns_primary)
+#   lab_gateway      – optional – default gateway (from group_vars/all)
+#   lab_dns_primary  – optional – primary DNS (from group_vars/all)
+#
+# Usage in a playbook:
+#   - name: Base setup for lab-dc02
+#     hosts: dc02
+#     gather_facts: false
+#     vars:
+#       target_hostname: LAB-DC02
+#       target_ip: 10.10.10.11
+#     roles:
+#       - windows_base
+# =======================================================================
+
+- name: Get current computer name
+  ansible.windows.win_shell: $env:COMPUTERNAME
+  register: _wb_current_hostname
+  changed_when: false
+
+- name: Rename computer to {{ target_hostname }}
+  ansible.windows.win_hostname:
+    name: "{{ target_hostname }}"
+  register: _wb_rename_result
+  when: _wb_current_hostname.stdout | trim | upper != target_hostname | upper
+  notify: reboot windows host
+
+- name: Flush handlers to apply rename reboot immediately
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for WinRM to be available after reboot
+  ansible.builtin.wait_for_connection:
+    delay: 30
+    timeout: 300
+    sleep: 10
+
+- name: Configure static IP address
+  ansible.windows.win_shell: |
+    $adapter  = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+    $desired  = "{{ target_ip }}"
+    $existing = Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -eq $desired }
+    if (-not $existing -or $existing.IPAddress -ne $desired) {
+        Remove-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-NetRoute     -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress -InterfaceAlias $adapter.Name `
+            -IPAddress $desired `
+            -PrefixLength {{ target_prefix | default(24) }} `
+            -DefaultGateway "{{ lab_gateway | default('10.10.10.1') }}" | Out-Null
+    }
+    Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+        -ServerAddresses "{{ target_dns | default(lab_dns_primary) | default('10.10.10.10') }}"
+  when: target_ip | default('') | length > 0

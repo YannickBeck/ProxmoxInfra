@@ -1,0 +1,49 @@
+---
+# =======================================================================
+# site.yml — Master Playbook
+# =======================================================================
+# Runs the full ProxmoxInfra lab setup in dependency order.
+# Each child playbook can also be run independently.
+#
+# Full lab setup:
+#   ansible-playbook -i inventory/lab.yml playbooks/site.yml
+#
+# Single VM:
+#   ansible-playbook -i inventory/lab.yml playbooks/dc.yml
+#
+# Specific tags only (works with site.yml or individual playbooks):
+#   ansible-playbook -i inventory/lab.yml playbooks/site.yml --tags rename,network
+#   ansible-playbook -i inventory/lab.yml playbooks/site.yml --tags validate
+#
+# Skip optional components that are not deployed in your lab:
+#   ansible-playbook -i inventory/lab.yml playbooks/site.yml \
+#       --limit dc,sccm,clients_win
+#
+# NOTE: Optional host groups (ca, dc02, aadconnect, clients_linux) are
+# commented out in the default lab.yml inventory. If you have not
+# uncommented them, those plays run against zero hosts and make no changes.
+# =======================================================================
+
+# 1. Primary DC — must run first: creates AD, DNS and DHCP for the domain
+- ansible.builtin.import_playbook: dc.yml
+
+# 2. Enterprise Root CA — optional (enable_ca = true in terraform.tfvars)
+#    Requires DC to be promoted so the CA can join the domain
+- ansible.builtin.import_playbook: ca.yml
+
+# 3. Secondary DC — optional (enable_dc02 = true)
+#    Replicates AD from lab-dc01 once the domain exists
+- ansible.builtin.import_playbook: dc02.yml
+
+# 4. SCCM prerequisites — requires the domain to be up for domain join
+- ansible.builtin.import_playbook: sccm.yml
+
+# 5. Azure AD Connect — optional (enable_aadconnect = true)
+#    Requires domain and internet connectivity for Entra ID sync
+- ansible.builtin.import_playbook: aadconnect.yml
+
+# 6. Windows 11 clients — domain join and SCCM client push preparation
+- ansible.builtin.import_playbook: client-windows.yml
+
+# 7. Linux clients — optional (enable_linux_client = true)
+- ansible.builtin.import_playbook: client-linux.yml

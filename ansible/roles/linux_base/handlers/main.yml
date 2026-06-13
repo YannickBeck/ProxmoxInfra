@@ -1,0 +1,14 @@
+---
+# =======================================================================
+# Role: linux_base — handlers/main.yml
+# =======================================================================
+
+- name: restart sshd
+  ansible.builtin.service:
+    name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    state: restarted
+
+- name: restart chrony
+  ansible.builtin.service:
+    name: chrony
+    state: restarted

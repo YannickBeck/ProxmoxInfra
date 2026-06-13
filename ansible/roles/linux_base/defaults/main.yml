@@ -1,0 +1,14 @@
+---
+# =======================================================================
+# Role: linux_base — defaults/main.yml
+# =======================================================================
+# Default variable values for the linux_base role.
+# Override in group_vars, host_vars or the playbook vars: block.
+# =======================================================================
+
+# NTP server the clients synchronise to. The lab DC runs NTP by default.
+# lab_ntp_server is defined in group_vars/all/main.yml as "10.10.10.10".
+ntp_server: "{{ lab_ntp_server | default('10.10.10.10') }}"
+
+# Timezone string accepted by tzdata / timedatectl.
+timezone: "Europe/Berlin"

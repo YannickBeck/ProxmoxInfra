@@ -12,6 +12,8 @@
 #   - Windows Server 2022 is installed on lab-ca01
 #   - WinRM is enabled on lab-ca01 (run winrm quickconfig -y)
 #   - Inventory lab.yml has a `ca` group with lab-ca01 credentials
+#   - Ansible Vault: inventory/group_vars/all/vault.yml must exist
+#     (admin_password and domain_join_password resolved via group_vars)
 #
 # Usage:
 #   ansible-playbook -i inventory/lab.yml playbooks/ca.yml
@@ -31,10 +33,10 @@
   gather_facts: false
 
   vars:
-    # Domain join credential — defaults to the LAB Administrator. The
-    # password is taken from the host's ansible_password unless you set
-    # domain_admin_password explicitly in the inventory.
-    domain_admin: "LAB\\Administrator"
+    # Domain join account — uses vault-backed aliases from group_vars/all/main.yml
+    # domain_join_user     → vault_domain_join_user     (default: LAB\Administrator)
+    # domain_join_password → vault_domain_join_password
+    # admin_password       → vault_admin_password
     ca_common_name: "LAB-Root-CA"
 
   tasks:
@@ -130,10 +132,10 @@
 
     - name: Join domain lab.local
       ansible.windows.win_domain_membership:
-        dns_domain_name: "{{ domain_name | default('lab.local') }}"
-        domain_admin_user: "{{ domain_admin }}"
-        domain_admin_password: "{{ domain_admin_password | default(hostvars[inventory_hostname]['ansible_password']) }}"
-        domain_ou_path: "OU=Servers,DC=lab,DC=local"
+        dns_domain_name:     "{{ lab_domain | default('lab.local') }}"
+        domain_admin_user:   "{{ domain_join_user }}"
+        domain_admin_password: "{{ domain_join_password }}"
+        domain_ou_path:      "OU=Servers,DC=lab,DC=local"
         state: domain
       register: domain_join_result
       tags: [join]

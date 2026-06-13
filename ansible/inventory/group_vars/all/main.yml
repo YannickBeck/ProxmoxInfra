@@ -1,0 +1,48 @@
+# =======================================================================
+# group_vars/all/main.yml — Shared Non-Sensitive Variables
+# =======================================================================
+# Plain (non-secret) variables shared across all hosts.
+# Secrets live ONLY in vault.yml (ansible-vault encrypted).
+# The vault_* variables are referenced here by their plain aliases so that
+# playbooks always use the alias (e.g. admin_password) and never reference
+# vault_* directly.
+# =======================================================================
+
+---
+
+# -------------------------------------------------------------------
+# Domain and Network
+# -------------------------------------------------------------------
+lab_domain:       "lab.local"
+lab_netbios:      "LAB"
+lab_gateway:      "10.10.10.1"
+lab_dns_primary:  "10.10.10.10"
+lab_dns_secondary: "10.10.10.11"
+lab_subnet:       "10.10.10.0/24"
+
+# Individual VM IPs (convenient aliases used by playbook tasks)
+lab_dc_ip:        "10.10.10.10"
+lab_sccm_ip:      "10.10.10.20"
+lab_ca_ip:        "10.10.10.30"
+
+# NTP — the DC acts as the authoritative NTP source inside the lab
+lab_ntp_server:   "10.10.10.10"
+
+# -------------------------------------------------------------------
+# SCCM Site
+# -------------------------------------------------------------------
+sccm_site_code:    "LAB"
+sccm_site_name:    "Lab Demo"
+sccm_sources_dir:  "C:\\SCCM_Sources"
+
+# -------------------------------------------------------------------
+# Vault-backed secret aliases
+# -------------------------------------------------------------------
+# These variables resolve to the encrypted values in vault.yml.
+# Playbooks and templates must reference these aliases, never vault_*.
+admin_password:       "{{ vault_admin_password }}"
+safe_mode_password:   "{{ vault_safe_mode_password }}"
+svc_sccm_password:    "{{ vault_svc_sccm_password }}"
+domain_join_user:     "{{ vault_domain_join_user }}"
+domain_join_password: "{{ vault_domain_join_password }}"
+entra_upn_suffix:     "{{ vault_entra_upn_suffix }}"

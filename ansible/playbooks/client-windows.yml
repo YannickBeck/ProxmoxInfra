@@ -1,0 +1,262 @@
+---
+# =======================================================================
+# Windows Clients Playbook
+# =======================================================================
+# Configures Windows 11 Enterprise client VMs (clients_win group) for
+# the lab.local domain. VMs are pre-named from Proxmox (via Terraform)
+# but the playbook re-applies the expected hostname to be idempotent.
+#
+# Prerequisites:
+#   - lab-dc01 is running and the lab.local domain is operational
+#   - lab-sccm01 is running (SCCM client push is initiated separately)
+#   - Windows 11 Enterprise Evaluation is installed on each client VM
+#   - WinRM is enabled on each client (run winrm quickconfig -y)
+#   - Inventory lab.yml has the clients_win group populated
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/client-windows.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/client-windows.yml \
+#       --limit lab-client01
+#   ansible-playbook -i inventory/lab.yml playbooks/client-windows.yml \
+#       --tags rename,network,join
+#
+# What this playbook does:
+#   1. Renames each client to its expected hostname (LAB-CLIENT01, etc.)
+#   2. Configures DHCP networking with DNS pointing to the DC
+#   3. Domain-joins to lab.local
+#   4. Enables Remote Desktop
+#
+# SCCM Client Push:
+#   SCCM client installation is NOT automated here. After domain join,
+#   initiate client push from:
+#     SCCM Console → Administration → Client Installation Settings
+#       → Client Push Installation → push to OU=Clients,DC=lab,DC=local
+#   See infrastructure/vms/sccm/README.md for the full guide.
+#
+# Intune / Hybrid AADJ:
+#   After Entra Connect sync is running and Hybrid AADJ is configured,
+#   clients register automatically on next gpupdate. Verify with:
+#     dsregcmd /status
+# =======================================================================
+
+- name: Configure Windows Clients – clients_win
+  hosts: clients_win
+  gather_facts: false
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check (always runs regardless of tags)
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      changed_when: false
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    - name: Get domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: current_domain
+      changed_when: false
+      tags: [info]
+
+    - name: Show domain status
+      ansible.builtin.debug:
+        msg: "Current domain/workgroup: {{ current_domain.stdout | trim }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename to expected hostname
+    # Convention: inventory hostname lab-client01 → LAB-CLIENT01
+    # The win_hostname module handles the rename + reboot-required flag.
+    # -------------------------------------------------------------------
+    - name: Compute expected hostname from inventory name
+      ansible.builtin.set_fact:
+        # Strip any leading "lab-" so that lab-client01 → CLIENT01,
+        # then prepend "LAB-" to produce LAB-CLIENT01.
+        expected_hostname: "LAB-{{ inventory_hostname | upper | regex_replace('^LAB-', '') }}"
+      tags: [rename, always]
+
+    - name: Rename computer to expected hostname
+      ansible.windows.win_hostname:
+        name: "{{ expected_hostname }}"
+      register: rename_result
+      when: current_hostname.stdout | trim | upper != expected_hostname
+      tags: [rename]
+
+    - name: Reboot after rename
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    - name: Wait for WinRM after rename reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    # -------------------------------------------------------------------
+    # Tag: network — DHCP (clients use DHCP from the lab DHCP scope),
+    #               DNS explicitly set to point at the DC
+    # -------------------------------------------------------------------
+    - name: Ensure the primary NIC uses DHCP
+      ansible.windows.win_shell: |
+        $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        # Enable DHCP only if it is currently disabled
+        $ipIface = Get-NetIPInterface -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if ($ipIface -and $ipIface.Dhcp -ne "Enabled") {
+            Set-NetIPInterface -InterfaceAlias $adapter.Name -Dhcp Enabled
+            # Remove any leftover static default route
+            Remove-NetRoute -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        # Always ensure DNS points at the DC regardless of DHCP settings
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+            -ServerAddresses "{{ lab_dns_primary | default('10.10.10.10') }}"
+      tags: [network]
+
+    - name: Verify DC is reachable via DNS/IP
+      ansible.windows.win_shell: |
+        Test-Connection -ComputerName "{{ lab_dns_primary | default('10.10.10.10') }}" -Count 2 -Quiet
+      register: dc_ping
+      changed_when: false
+      tags: [network]
+
+    - name: Fail if DC is not reachable
+      ansible.builtin.fail:
+        msg: >-
+          Cannot reach Domain Controller at {{ lab_dns_primary | default('10.10.10.10') }}.
+          Ensure lab-dc01 is running and the DHCP scope is active before joining clients.
+      when: dc_ping.stdout | trim | lower == "false"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: join — domain-join to lab.local (placed in OU=Clients)
+    # -------------------------------------------------------------------
+    - name: Join domain lab.local (OU=Clients)
+      ansible.windows.win_domain_membership:
+        dns_domain_name: "{{ lab_domain | default('lab.local') }}"
+        domain_admin_user: "{{ domain_join_user }}"
+        domain_admin_password: "{{ domain_join_password }}"
+        domain_ou_path: "OU=Clients,DC=lab,DC=local"
+        state: domain
+      register: domain_join_result
+      tags: [join]
+
+    - name: Reboot after domain join
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: domain_join_result.reboot_required | default(false)
+      tags: [join]
+
+    - name: Wait for WinRM after domain-join reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: domain_join_result.reboot_required | default(false)
+      tags: [join]
+
+    # -------------------------------------------------------------------
+    # Tag: configure — enable RDP
+    # -------------------------------------------------------------------
+    - name: Enable Remote Desktop (RDP)
+      ansible.windows.win_shell: |
+        # Allow RDP connections
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+            -Name fDenyTSConnections -Value 0
+        # Enable the built-in firewall rules for Remote Desktop
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      tags: [configure]
+
+    - name: Set Network Level Authentication for RDP
+      ansible.windows.win_shell: |
+        # NLA is recommended; set to 0 to disable NLA (useful in lab if clients
+        # do not have matching machine certs or Kerberos).  Change to 1 for NLA.
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+            -Name UserAuthentication -Value 0
+      tags: [configure]
+
+    # -------------------------------------------------------------------
+    # SCCM client push note — informational, always shown
+    # -------------------------------------------------------------------
+    - name: SCCM Client Push instructions
+      ansible.builtin.debug:
+        msg:
+          - "SCCM client installation is NOT automated by this playbook."
+          - ""
+          - "To push the SCCM client to this machine after domain join:"
+          - "  1. Open the SCCM Console on LAB-SCCM01"
+          - "  2. Navigate to: Administration → Client Installation Settings"
+          - "  3. Open the 'Client Push Installation' properties"
+          - "  4. On the 'Accounts' tab, add LAB\\Administrator as the push account"
+          - "  5. Navigate to: Assets and Compliance → Devices"
+          - "  6. Right-click {{ expected_hostname }} → Install Client"
+          - "     OR right-click the OU=Clients device collection → Install Client"
+          - ""
+          - "See infrastructure/vms/sccm/README.md for the full step-by-step guide."
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — Intune / Hybrid AADJ status
+    # -------------------------------------------------------------------
+    - name: Show Intune and Hybrid AADJ enrollment information
+      ansible.builtin.debug:
+        msg:
+          - "Intune enrollment and Hybrid Azure AD Join status check:"
+          - "  Run on {{ expected_hostname }}:"
+          - "    dsregcmd /status"
+          - ""
+          - "Key fields to verify:"
+          - "  AzureAdJoined        : YES  (requires Entra Connect + Hybrid AADJ configured)"
+          - "  DomainJoined         : YES  (set after successful domain join)"
+          - "  EnterpriseJoined     : NO   (expected for AADJ, not workplace join)"
+          - "  MDMUrl               : https://enrollment.manage.microsoft.com  (if Intune enrolled)"
+          - ""
+          - "If AzureAdJoined is NO:"
+          - "  1. Ensure lab-aadc01 Entra Connect sync is running"
+          - "  2. Run: Start-ADSyncSyncCycle -PolicyType Delta  (on lab-aadc01)"
+          - "  3. Run gpupdate /force on the client, then reboot"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify domain membership
+    # -------------------------------------------------------------------
+    - name: Verify domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: validate_domain
+      changed_when: false
+      tags: [validate]
+
+    - name: Assert that client is joined to lab.local
+      ansible.builtin.assert:
+        that:
+          - validate_domain.stdout | trim | lower == lab_domain | default('lab.local') | lower
+        fail_msg: >-
+          {{ expected_hostname }} domain is '{{ validate_domain.stdout | trim }}',
+          expected '{{ lab_domain | default('lab.local') }}'.
+          Check DC connectivity and domain join credentials.
+        success_msg: "{{ expected_hostname }} is correctly joined to {{ validate_domain.stdout | trim }}"
+      tags: [validate]

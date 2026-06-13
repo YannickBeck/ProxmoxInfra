@@ -1,0 +1,13 @@
+# =======================================================================
+# group_vars/linux.yml — SSH Defaults for All Linux Hosts
+# =======================================================================
+# These settings apply to every host in the `linux` group (and all its
+# child groups: clients_linux, opnsense).
+# Per-host overrides in the inventory take precedence.
+# =======================================================================
+
+---
+ansible_connection:      ssh
+ansible_port:            22
+ansible_python_interpreter: auto
+ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
