@@ -2,6 +2,11 @@
 
 A fully automated Windows lab built on a Proxmox VE 8.x hypervisor, accessible from anywhere via a Raspberry Pi running ZeroTier. Designed for IT professionals testing Microsoft SCCM (Configuration Manager), Intune co-management, Active Directory, and related enterprise tooling — without needing cloud infrastructure.
 
+> **OpenStack target:** A separate Terraform implementation and staged migration
+> plan are available in
+> [infrastructure/openstack](infrastructure/openstack/README.md). The existing
+> Proxmox implementation remains the source environment.
+
 ---
 
 ## Architecture Overview
@@ -119,6 +124,11 @@ ProxmoxInfra/
 │   └── prerequisites.md              # Manual steps before automation
 │
 ├── infrastructure/
+│   ├── openstack/
+│   │   ├── README.md                  # OpenStack target and usage
+│   │   ├── MIGRATION_PLAN.md          # Staged Proxmox-to-OpenStack migration
+│   │   └── terraform/                 # Neutron, Nova, Cinder, security groups
+│   │
 │   ├── proxmox/
 │   │   ├── README.md                  # Terraform setup overview
 │   │   └── terraform/

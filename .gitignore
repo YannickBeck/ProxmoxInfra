@@ -7,12 +7,39 @@
 # -----------------------------------------------------------------------
 # Provider plugins and modules (downloaded by terraform init)
 **/.terraform/
-**/.terraform.lock.hcl
+# Dependency lock files are intentionally committed for reproducible providers.
 
 # State files — contain sensitive resource details, never commit
 *.tfstate
+*.tfstate.*
 *.tfstate.backup
 *.tfstate.*.backup
+errored.tfstate
+.terraform.tfstate.lock.info
+terraform.tfstate.d/
+
+# Saved plans and machine-readable plan output may contain secrets
+*.tfplan
+*.tfplan.*
+*.plan
+tfplan
+tfplan.*
+plan.out
+plan.json
+*-plan.json
+
+# Backend and Terraform CLI credential configuration
+*.tfbackend
+backend.hcl
+backend*.hcl
+*.backend.hcl
+credentials.tfrc.json
+.terraformrc
+terraform.rc
+!*.tfbackend.example
+!backend.hcl.example
+!backend*.hcl.example
+!*.backend.hcl.example
 
 # Crash logs
 crash.log
@@ -23,6 +50,10 @@ terraform.tfvars
 !terraform.tfvars.example
 *.auto.tfvars
 !*.auto.tfvars.example
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
 
 # Override files (local-only Terraform customisations)
 override.tf
@@ -43,6 +74,8 @@ ansible/inventory/lab.yml
 # Ansible vault password files
 .vault_pass
 vault_password_file
+ansible/inventory/**/vault.yml
+ansible/inventory/**/vault.yaml
 
 # -----------------------------------------------------------------------
 # Environment / secrets
@@ -51,6 +84,15 @@ vault_password_file
 .env.*
 *.env
 !*.env.example
+
+# OpenStack authentication material
+**/clouds.yaml
+**/clouds.yml
+**/secure.yaml
+**/secure.yml
+**/openrc
+**/openrc.sh
+**/*-openrc.sh
 
 # SSH keys
 *.pem

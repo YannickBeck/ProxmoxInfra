@@ -1,0 +1,60 @@
+# Copy to terraform.tfvars. Do not put passwords or application credentials here.
+# Authentication is read from clouds.yaml / OS_CLOUD or standard OS_* variables.
+
+cloud_name = "lab-openstack"
+region     = "RegionOne"
+
+# isolated: no gateway/egress; native: Neutron router at 10.10.10.1 with SNAT.
+gateway_mode          = "isolated"
+external_network_name = null
+
+lab_network_name = "lab-net-internal"
+lab_subnet_name  = "lab-subnet-internal-v4"
+lab_cidr         = "10.10.10.0/24"
+lab_gateway_ip   = "10.10.10.1"
+lab_dns_servers  = ["10.10.10.10"]
+
+# Keep false if lab-dc01 provides Windows DHCP. All MVP ports use fixed IPs.
+enable_neutron_dhcp = false
+enable_external_egress = false
+
+# Roll out foundation -> identity -> servers -> all, validating each stage.
+deployment_stage = "foundation"
+
+# Replace with a VPN/bastion or operator subnet. Never use 0.0.0.0/0.
+management_cidrs = ["203.0.113.10/32"]
+key_pair_name    = "lab-admin"
+
+image_names = {
+  windows_server = "windows-server-2022-cloudbase"
+  windows_client = "windows-11-enterprise-cloudbase"
+  ubuntu         = "ubuntu-22.04-cloud"
+  rocky          = "rocky-9-cloud"
+}
+
+# These flavors must already exist in the target OpenStack cloud.
+flavor_names = {
+  windows_small = "lab-2vcpu-4gb"
+  windows_large = "lab-4vcpu-8gb"
+  linux_small   = "lab-2vcpu-2gb"
+}
+
+compute_availability_zone = null
+volume_availability_zone  = null
+volume_type               = "REPLACE_WITH_ENCRYPTED_VOLUME_TYPE"
+
+enable_dc02         = false
+enable_ca           = false
+enable_aadconnect   = false
+enable_client02     = false
+enable_linux_client = false
+linux_client_count  = 1
+
+# 0 disables the optional WSUS content volume; use 150+ GB for a practical lab.
+wsus_content_disk_size = 0
+
+environment = "lab"
+owner       = "lab-admin"
+non_sensitive_metadata = {
+  data_classification = "internal"
+}
