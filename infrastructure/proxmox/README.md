@@ -1,6 +1,6 @@
 # Proxmox Terraform – VM Provisioning
 
-This directory contains the Terraform configuration that creates the three lab VMs on Proxmox VE using the [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox/latest) provider.
+This directory contains the Terraform configuration for the core lab, logical resource pools and opt-in extension VMs on Proxmox VE using the [bpg/proxmox](https://registry.terraform.io/providers/bpg/proxmox/latest) provider.
 
 ---
 
@@ -11,8 +11,10 @@ This directory contains the Terraform configuration that creates the three lab V
 | `proxmox_virtual_environment_vm.dc` | 101 | lab-dc01 | 2 vCPU, 4 GB RAM, 60 GB disk |
 | `proxmox_virtual_environment_vm.sccm` | 102 | lab-sccm01 | 4 vCPU, 8 GB RAM, 100 GB OS + 100 GB SQL data |
 | `proxmox_virtual_environment_vm.client` | 103 | lab-client01 | 2 vCPU, 4 GB RAM, 60 GB disk |
+| `proxmox_virtual_environment_vm.nas` (optional) | 120 | lab-nas01 | 4 vCPU, 8 GB RAM, 32 GB OS + data disk |
+| `proxmox_virtual_environment_vm.docusaurus` (optional) | 127 | lab-docusaurus01 | 2 vCPU, 4 GB RAM, 40 GB disk |
 
-All VMs are created on the `vmbr1` internal lab bridge (10.10.10.0/24) and attached to a VirtIO NIC. Two CD-ROM drives are attached to each server VM: one for the Windows ISO and one for the VirtIO drivers ISO.
+All VMs are created on the `vmbr1` internal lab bridge (10.10.10.0/24) and attached to a VirtIO NIC. Terraform attaches the Windows installer ISO. Before starting Windows Setup, add `virtio-win.iso` temporarily as a second CD/DVD drive (`ide3`) in the Proxmox UI; the provider currently manages only one CD-ROM per VM. Detach the driver ISO after installation.
 
 ---
 
@@ -83,6 +85,10 @@ qm start 103   # lab-client01
 | `domain_netbios` | string | `LAB` | NetBIOS domain name |
 | `safe_mode_password` | string (sensitive) | – | AD DSRM password |
 | `admin_password` | string (sensitive) | – | Local Administrator password for VMs |
+| `enable_docusaurus` | bool | `false` | Create the dedicated Docusaurus VM in `pool-nas-storage` |
+| `enable_nas` | bool | `false` | Create the TrueNAS VM in `pool-nas-storage` |
+| `truenas_iso` | string | `TrueNAS-SCALE-24.10.2.iso` | TrueNAS installer ISO filename |
+| `nas_data_disk_size` | number | `500` | TrueNAS data disk size in GB |
 
 ---
 
@@ -93,12 +99,15 @@ terraform/
 ├── versions.tf              # Terraform and provider version constraints
 ├── provider.tf              # bpg/proxmox provider configuration
 ├── variables.tf             # Input variable declarations
+├── pools.tf                 # Stable logical Proxmox resource pools
 ├── main.tf                  # VM resource definitions
 ├── outputs.tf               # Output values (VMID, names)
 └── terraform.tfvars.example # Example variables file (safe to commit)
 ```
 
 The actual `terraform.tfvars` file is excluded by `.gitignore` because it contains sensitive values (API token, passwords).
+
+VMs declare `pool_id` explicitly. The complete pool tree, rollout order and VMID registry are documented in [`docs/logical-pools.md`](../../docs/logical-pools.md).
 
 ---
 

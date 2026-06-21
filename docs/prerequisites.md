@@ -56,6 +56,8 @@ The VirtIO drivers ISO provides paravirtualized storage (SCSI) and network (Ethe
 
 **Expected filename**: `virtio-win.iso`
 
+The `bpg/proxmox` VM resource currently manages only one CD-ROM per VM. Terraform attaches the Windows installer ISO; before booting Windows Setup, add `virtio-win.iso` manually as a second CD/DVD drive on `ide3` in the Proxmox UI. Remove it after installing the storage and network drivers.
+
 ---
 
 ## 5. Create Proxmox API Token

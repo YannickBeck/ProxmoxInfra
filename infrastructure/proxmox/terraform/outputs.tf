@@ -57,8 +57,8 @@ output "aadconnect_vmid" {
 }
 
 output "opnsense_vmid" {
-  description = "VM ID of lab-opnsense01 (OPNsense). Null when not enabled or when pfSense is enabled instead."
-  value       = var.enable_opnsense && !var.enable_pfsense ? proxmox_virtual_environment_vm.opnsense[0].vm_id : null
+  description = "VM ID of lab-opnsense01 (OPNsense). Null when enable_opnsense = false."
+  value       = var.enable_opnsense ? proxmox_virtual_environment_vm.opnsense[0].vm_id : null
 }
 
 output "client02_vmid" {
@@ -74,4 +74,14 @@ output "linux01_vmid" {
 output "linux02_vmid" {
   description = "VM ID of lab-linux02 (Rocky Linux 9). Null when linux_client_count < 2."
   value       = var.enable_linux_client && var.linux_client_count >= 2 ? proxmox_virtual_environment_vm.linux02[0].vm_id : null
+}
+
+output "nas_vmid" {
+  description = "VM ID of lab-nas01. Null when enable_nas = false."
+  value       = var.enable_nas ? proxmox_virtual_environment_vm.nas[0].vm_id : null
+}
+
+output "docusaurus_vmid" {
+  description = "VM ID of lab-docusaurus01. Null when enable_docusaurus = false."
+  value       = var.enable_docusaurus ? proxmox_virtual_environment_vm.docusaurus[0].vm_id : null
 }

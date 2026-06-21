@@ -22,13 +22,16 @@ This document covers IP addressing, routing, DNS, DHCP, firewall rules, and port
 | Device | VMID | IP | Static/DHCP | Notes |
 |---|---|---|---|---|
 | lab-fw01 (pfSense) | 100 | 10.10.10.1 (LAN) | Static | **Extension** (`enable_pfsense`). Replaces Proxmox host as gateway. WAN: DHCP on vmbr0. |
-| Proxmox vmbr1 | – | 10.10.10.1 | Static | **Only when pfSense NOT deployed.** Remove when pfSense is enabled. |
+| lab-opnsense01 | 107 | 10.10.10.1 (LAN) | Static | **Recommended extension** (`enable_opnsense`). Mutually exclusive with pfSense. |
+| Proxmox vmbr1 | – | 10.10.10.1 | Static | **Only when no firewall VM is deployed.** Remove when OPNsense or pfSense is enabled. |
 | lab-dc01 | 101 | 10.10.10.10 | Static | Primary DC, DNS, DHCP server |
 | lab-dc02 | 105 | 10.10.10.11 | Static | **Extension** (`enable_dc02`). Replica DC, secondary DNS. |
 | lab-sccm01 | 102 | 10.10.10.20 | Static | SCCM + SQL + optional WSUS |
 | lab-ca01 | 104 | 10.10.10.30 | Static | **Extension** (`enable_ca`). Enterprise Root CA. |
 | lab-aadc01 | 106 | 10.10.10.40 | Static | **Extension** (`enable_aadconnect`). Azure AD Connect. |
 | lab-client01 | 103 | 10.10.10.50 | Static or DHCP | Windows 11 client; DHCP range starts at .100 |
+| lab-nas01 | 120 | 10.10.10.70 | Static | **New extension** (`enable_nas`). TrueNAS Scale. |
+| lab-docusaurus01 | 127 | 10.10.10.74 | Static | **New extension** (`enable_docusaurus`). Independent documentation VM. |
 | DHCP range | – | 10.10.10.100–200 | Dynamic | Served by lab-dc01 Windows DHCP role |
 
 ---
@@ -47,7 +50,7 @@ This document covers IP addressing, routing, DNS, DHCP, firewall rules, and port
 - **Proxmox configuration**: Linux bridge with **no physical NIC** (isolated)
 - **IP**: `10.10.10.1/24` on the Proxmox host — acts as the default gateway for all VMs
 - **No internet access by default** — keeps the lab isolated and self-contained
-- All three lab VMs connect exclusively to vmbr1
+- All lab VMs connect to vmbr1; a firewall VM additionally uses vmbr0 for WAN.
 
 Configure on Proxmox host (`/etc/network/interfaces`):
 ```

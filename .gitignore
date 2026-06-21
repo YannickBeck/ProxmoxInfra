@@ -85,6 +85,10 @@ ansible/inventory/**/vault.yaml
 *.env
 !*.env.example
 
+# Node / Docusaurus generated content
+**/node_modules/
+**/.docusaurus/
+
 # OpenStack authentication material
 **/clouds.yaml
 **/clouds.yml

@@ -1,0 +1,26 @@
+/* =======================================================================
+   Lab Docs — Custom CSS
+   ======================================================================= */
+
+:root {
+  --ifm-color-primary: #2e6da4;
+  --ifm-color-primary-dark: #29629e;
+  --ifm-color-primary-darker: #255d8c;
+  --ifm-color-primary-darkest: #1e4d73;
+  --ifm-color-primary-light: #3378aa;
+  --ifm-color-primary-lighter: #3a82b5;
+  --ifm-color-primary-lightest: #4d94c0;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #4da6e8;
+  --ifm-color-primary-dark: #3899e5;
+  --ifm-color-primary-darker: #2b91e3;
+  --ifm-color-primary-darkest: #1678c2;
+  --ifm-color-primary-light: #62b3eb;
+  --ifm-color-primary-lighter: #6fb9ec;
+  --ifm-color-primary-lightest: #94cdf2;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}

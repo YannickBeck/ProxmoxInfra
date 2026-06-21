@@ -209,3 +209,82 @@ variable "rocky_iso" {
   default     = "Rocky-9.4-x86_64-dvd.iso"
   description = "Filename of the Rocky Linux 9 DVD ISO in Proxmox local storage. Download from https://rockylinux.org/download."
 }
+
+# -----------------------------------------------------------------------
+# New NAS / documentation infrastructure
+# -----------------------------------------------------------------------
+
+variable "enable_nas" {
+  type        = bool
+  default     = false
+  description = "Create VM 120 (lab-nas01), the TrueNAS SCALE storage VM in pool-nas-storage."
+}
+
+variable "truenas_iso" {
+  type        = string
+  default     = "TrueNAS-SCALE-24.10.2.iso"
+  description = "Filename of the TrueNAS SCALE installer ISO in Proxmox ISO storage."
+}
+
+variable "nas_data_disk_size" {
+  type        = number
+  default     = 500
+  description = "Size in GB of the ZFS data disk (scsi1) attached to lab-nas01."
+
+  validation {
+    condition     = var.nas_data_disk_size >= 50
+    error_message = "nas_data_disk_size must be at least 50 GB."
+  }
+}
+
+variable "enable_docusaurus" {
+  type        = bool
+  default     = false
+  description = "Create VM 127 (lab-docusaurus01), the dedicated Docusaurus host in pool-nas-storage."
+}
+
+# -----------------------------------------------------------------------
+# Logical project toggles (reserved for future consolidated stacks)
+# -----------------------------------------------------------------------
+
+variable "enable_ai_mcp_stack" {
+  type        = bool
+  default     = false
+  description = "Enable the future consolidated AI/MCP stack."
+}
+
+variable "enable_observability_stack" {
+  type        = bool
+  default     = false
+  description = "Enable the future Beszel and Uptime Kuma monitoring stack."
+}
+
+variable "enable_wazuh_siem" {
+  type        = bool
+  default     = false
+  description = "Enable the future optional Wazuh single-node SIEM stack."
+}
+
+variable "enable_backup_dr" {
+  type        = bool
+  default     = false
+  description = "Enable future backup and disaster-recovery project components."
+}
+
+variable "enable_proxmox_backup_server" {
+  type        = bool
+  default     = false
+  description = "Enable the future Proxmox Backup Server VM."
+}
+
+variable "enable_devops_automation" {
+  type        = bool
+  default     = false
+  description = "Enable the future consolidated automation host."
+}
+
+variable "enable_dns_filter" {
+  type        = bool
+  default     = false
+  description = "Enable the future AdGuard Home DNS-filter host."
+}

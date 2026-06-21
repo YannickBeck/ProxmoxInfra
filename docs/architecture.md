@@ -45,6 +45,9 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | VMID | Toggle | Hostname | IP | Role |
 |---|---|---|---|---|---|
 | pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall |
+| OPNsense router (recommended) | 107 | `enable_opnsense` | lab-opnsense01 | 10.10.10.1 (LAN) | NAT, firewall, VLANs, optional IDS/IPS; exclusive with pfSense |
+| TrueNAS storage | 120 | `enable_nas` | lab-nas01 | 10.10.10.70 | ZFS, SMB/NFS and backup target |
+| Docusaurus docs | 127 | `enable_docusaurus` | lab-docusaurus01 | 10.10.10.74 | Dedicated documentation VM in pool-nas-storage |
 | Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI, SCCM certs, LDAPS |
 | Secondary DC | 105 | `enable_dc02` | lab-dc02 | 10.10.10.11 | AD replication, DNS redundancy |
 | Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra sync, Hybrid AADJ, co-mgmt |
@@ -64,6 +67,9 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | vCPU | RAM | Disk | Notes |
 |---|---|---|---|---|
 | lab-fw01 | 2 | 2 GB | 16 GB | Dual-NIC: vmbr0 (WAN) + vmbr1 (LAN) |
+| lab-opnsense01 | 2 | 2 GB | 20 GB | Recommended dual-NIC firewall; alternative to pfSense |
+| lab-nas01 | 4 | 8 GB | 32 GB OS + configurable data disk | TrueNAS Scale and ZFS |
+| lab-docusaurus01 | 2 | 4 GB | 40 GB | Ubuntu with Docker Compose |
 | lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA, domain-joined |
 | lab-dc02 | 2 | 4 GB | 60 GB | Replica DC, same specs as DC01 |
 | lab-aadc01 | 2 | 4 GB | 60 GB | Member server, needs internet (pfSense) |
@@ -145,22 +151,26 @@ lab-dc01 (must be fully booted and AD domain ready)
 When powering on the lab from scratch:
 
 1. **Wake Proxmox host** (via WOL from Raspberry Pi or power button)
-2. **Start lab-fw01** (VM 100, if deployed): `qm start 100` — wait for pfSense to be ready before continuing
-3. **Start lab-dc01** (VM 101): `qm start 101` — wait ~3–5 min for AD services
-4. **Start lab-dc02** (VM 105, if deployed): `qm start 105`
-5. **Start lab-ca01** (VM 104, if deployed): `qm start 104`
-6. **Start lab-sccm01** (VM 102): `qm start 102` — wait ~5–10 min for SQL + SCCM services
-7. **Start lab-aadc01** (VM 106, if deployed): `qm start 106`
-8. **Start lab-client01** (VM 103): `qm start 103`
+2. **Start the selected firewall** (VM 107 OPNsense or VM 100 pfSense, if deployed) and wait for it to be ready
+3. **Start lab-nas01** (VM 120, if deployed): `qm start 120`
+4. **Start lab-dc01** (VM 101): `qm start 101` — wait ~3–5 min for AD services
+5. **Start lab-dc02** (VM 105, if deployed): `qm start 105`
+6. **Start lab-ca01** (VM 104, if deployed): `qm start 104`
+7. **Start lab-sccm01** (VM 102): `qm start 102` — wait ~5–10 min for SQL + SCCM services
+8. **Start lab-aadc01** (VM 106, if deployed): `qm start 106`
+9. **Start lab-client01** (VM 103): `qm start 103`
+10. **Start lab-docusaurus01** (VM 127, if deployed): `qm start 127`
 
 Shutdown order (reverse):
 ```bash
 qm shutdown 103   # client first
+qm shutdown 127   # documentation VM
 qm shutdown 106   # Azure AD Connect
 qm shutdown 102   # SCCM + SQL
 qm shutdown 104   # CA
 qm shutdown 105   # DC02
 qm shutdown 101   # Primary DC last
-qm shutdown 100   # pfSense
+qm shutdown 120   # NAS after its consumers
+qm shutdown 107   # OPNsense (use VM 100 instead when pfSense is selected)
 shutdown -h now   # Proxmox host
 ```

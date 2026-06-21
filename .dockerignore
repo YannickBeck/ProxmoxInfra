@@ -1,0 +1,8 @@
+.git
+**/.docusaurus
+**/.terraform
+**/build
+**/node_modules
+*.tfstate
+*.tfstate.*
+terraform.tfvars

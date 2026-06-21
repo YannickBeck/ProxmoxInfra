@@ -17,17 +17,22 @@
 #   108 – lab-client02  : Second Windows 11 client       (optional, enable_client02)
 #   110 – lab-linux01   : Ubuntu 22.04 LTS client        (optional, enable_linux_client)
 #   111 – lab-linux02   : Rocky Linux 9 client           (optional, enable_linux_client + linux_client_count=2)
+#   120 – lab-nas01     : TrueNAS SCALE NAS              (optional, enable_nas)
+#   127 – lab-docusaurus01: Dedicated docs VM            (optional, enable_docusaurus)
 #
-# VMs 100/104/105/106/107/108/110/111 are opt-in extensions (see docs/extensions.md).
+# VMs 100/104/105/106/107/108/110/111/120/127 are opt-in extensions (see docs/extensions.md).
 # Each is guarded by a `count` based on its enable_* toggle and defaults to OFF.
 # =======================================================================
 
 locals {
   win_server_iso = "${var.iso_storage}:iso/${var.windows_server_iso}"
   win11_iso      = "${var.iso_storage}:iso/${var.windows_11_iso}"
-  virtio_iso     = "${var.iso_storage}:iso/${var.virtio_iso}"
   pfsense_iso    = "${var.iso_storage}:iso/${var.pfsense_iso}"
 }
+
+# The provider currently manages one CD-ROM per VM. During Windows setup,
+# attach var.virtio_iso temporarily as ide3 in the Proxmox UI and detach it
+# after the storage and network drivers are installed.
 
 # -----------------------------------------------------------------------
 # VM 101 – lab-dc01 (Domain Controller)
@@ -40,6 +45,7 @@ resource "proxmox_virtual_environment_vm" "dc" {
   vm_id     = 101
   name      = "lab-dc01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Domain Controller – Windows Server 2022, AD DS, DNS, DHCP for lab.local"
 
@@ -74,14 +80,8 @@ resource "proxmox_virtual_environment_vm" "dc" {
 
   # CD-ROM 1: Windows Server 2022 ISO (used for OS installation)
   cdrom {
-    file_id  = local.win_server_iso
+    file_id   = local.win_server_iso
     interface = "ide2"
-  }
-
-  # CD-ROM 2: VirtIO drivers ISO (load during Windows setup)
-  cdrom {
-    file_id  = local.virtio_iso
-    interface = "ide3"
   }
 
   # ---------- Network ----------
@@ -131,6 +131,7 @@ resource "proxmox_virtual_environment_vm" "sccm" {
   vm_id     = 102
   name      = "lab-sccm01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab SCCM Server – Windows Server 2022, SCCM Current Branch, SQL Server 2019/2022"
 
@@ -190,14 +191,8 @@ resource "proxmox_virtual_environment_vm" "sccm" {
 
   # CD-ROM 1: Windows Server 2022 ISO
   cdrom {
-    file_id  = local.win_server_iso
+    file_id   = local.win_server_iso
     interface = "ide2"
-  }
-
-  # CD-ROM 2: VirtIO drivers ISO
-  cdrom {
-    file_id  = local.virtio_iso
-    interface = "ide3"
   }
 
   # ---------- Network ----------
@@ -235,6 +230,7 @@ resource "proxmox_virtual_environment_vm" "client" {
   vm_id     = 103
   name      = "lab-client01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Windows 11 Client – Enterprise Eval, domain-joined, SCCM + Intune managed"
 
@@ -267,14 +263,8 @@ resource "proxmox_virtual_environment_vm" "client" {
 
   # CD-ROM 1: Windows 11 Enterprise Evaluation ISO
   cdrom {
-    file_id  = local.win11_iso
+    file_id   = local.win11_iso
     interface = "ide2"
-  }
-
-  # CD-ROM 2: VirtIO drivers ISO (for network driver during/after install)
-  cdrom {
-    file_id  = local.virtio_iso
-    interface = "ide3"
   }
 
   # ---------- Network ----------
@@ -322,6 +312,7 @@ resource "proxmox_virtual_environment_vm" "pfsense" {
   vm_id     = 100
   name      = "lab-fw01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.network_firewall.pool_id
 
   description = "Lab pfSense CE router/firewall – NAT + segmentation (WAN vmbr0 / LAN vmbr1 10.10.10.1)"
 
@@ -383,6 +374,11 @@ resource "proxmox_virtual_environment_vm" "pfsense" {
 
   lifecycle {
     ignore_changes = [started]
+
+    precondition {
+      condition     = !var.enable_opnsense
+      error_message = "enable_pfsense and enable_opnsense are mutually exclusive because both use 10.10.10.1."
+    }
   }
 }
 
@@ -399,6 +395,7 @@ resource "proxmox_virtual_environment_vm" "ca" {
   vm_id     = 104
   name      = "lab-ca01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Enterprise Root CA – Windows Server 2022, AD CS PKI for SCCM/IIS/LDAPS (10.10.10.30)"
 
@@ -430,11 +427,6 @@ resource "proxmox_virtual_environment_vm" "ca" {
   cdrom {
     file_id   = local.win_server_iso
     interface = "ide2"
-  }
-
-  cdrom {
-    file_id   = local.virtio_iso
-    interface = "ide3"
   }
 
   network_device {
@@ -469,6 +461,7 @@ resource "proxmox_virtual_environment_vm" "dc02" {
   vm_id     = 105
   name      = "lab-dc02"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Secondary Domain Controller – Windows Server 2022, AD DS + DNS replica (10.10.10.11)"
 
@@ -500,11 +493,6 @@ resource "proxmox_virtual_environment_vm" "dc02" {
   cdrom {
     file_id   = local.win_server_iso
     interface = "ide2"
-  }
-
-  cdrom {
-    file_id   = local.virtio_iso
-    interface = "ide3"
   }
 
   network_device {
@@ -541,6 +529,7 @@ resource "proxmox_virtual_environment_vm" "aadconnect" {
   vm_id     = 106
   name      = "lab-aadc01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Azure AD Connect server – Windows Server 2022, Entra Connect Sync for hybrid identity (10.10.10.40)"
 
@@ -574,11 +563,6 @@ resource "proxmox_virtual_environment_vm" "aadconnect" {
     interface = "ide2"
   }
 
-  cdrom {
-    file_id   = local.virtio_iso
-    interface = "ide3"
-  }
-
   network_device {
     bridge  = var.lab_network_bridge
     model   = "virtio"
@@ -609,17 +593,22 @@ resource "proxmox_virtual_environment_vm" "aadconnect" {
 # When deployed: remove 10.10.10.1/24 from Proxmox host vmbr1.
 # -----------------------------------------------------------------------
 resource "proxmox_virtual_environment_vm" "opnsense" {
-  count     = var.enable_opnsense && !var.enable_pfsense ? 1 : 0
+  count     = var.enable_opnsense ? 1 : 0
   vm_id     = 107
   name      = "lab-opnsense01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.network_firewall.pool_id
 
   description = "Lab OPNsense CE router/firewall – NAT + IDS/IPS + REST API (WAN vmbr0 / LAN vmbr1 10.10.10.1)"
 
   operating_system { type = "other" }
   bios = "seabios"
 
-  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
   memory { dedicated = 2048 }
 
   disk {
@@ -631,18 +620,36 @@ resource "proxmox_virtual_environment_vm" "opnsense" {
     discard      = "on"
   }
 
-  cdrom { file_id = "${var.iso_storage}:iso/${var.opnsense_iso}"; interface = "ide2" }
+  cdrom {
+    file_id   = "${var.iso_storage}:iso/${var.opnsense_iso}"
+    interface = "ide2"
+  }
 
   # NIC 1 = WAN (home LAN bridge, DHCP from home router) → vtnet0
-  network_device { bridge = var.wan_bridge; model = "virtio"; enabled = true }
+  network_device {
+    bridge  = var.wan_bridge
+    model   = "virtio"
+    enabled = true
+  }
   # NIC 2 = LAN (isolated lab bridge, static 10.10.10.1/24) → vtnet1
-  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
 
   vga { type = "std" }
   boot_order    = ["ide2", "scsi0"]
   scsi_hardware = "virtio-scsi-pci"
   started       = false
-  lifecycle { ignore_changes = [started] }
+  lifecycle {
+    ignore_changes = [started]
+
+    precondition {
+      condition     = !var.enable_pfsense
+      error_message = "enable_opnsense and enable_pfsense are mutually exclusive because both use 10.10.10.1."
+    }
+  }
 }
 
 # -----------------------------------------------------------------------
@@ -653,18 +660,36 @@ resource "proxmox_virtual_environment_vm" "client02" {
   vm_id     = 108
   name      = "lab-client02"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.sccm_lab.pool_id
 
   description = "Lab Windows 11 Client 2 – second managed endpoint for SCCM/Intune multi-client testing"
 
   operating_system { type = "win11" }
   bios = "seabios"
-  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
   memory { dedicated = 4096 }
 
-  disk { datastore_id = var.vm_storage; size = 60; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
-  cdrom { file_id = local.win11_iso; interface = "ide2" }
-  cdrom { file_id = local.virtio_iso; interface = "ide3" }
-  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  disk {
+    datastore_id = var.vm_storage
+    size         = 60
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+  cdrom {
+    file_id   = local.win11_iso
+    interface = "ide2"
+  }
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
   vga { type = "std" }
   boot_order    = ["ide2", "scsi0"]
   scsi_hardware = "virtio-scsi-pci"
@@ -684,17 +709,36 @@ resource "proxmox_virtual_environment_vm" "linux01" {
   vm_id     = 110
   name      = "lab-linux01"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.linux_clients.pool_id
 
   description = "Lab Ubuntu 22.04 LTS – Linux client, SSH-managed by Ansible, optional AD join via SSSD"
 
   operating_system { type = "l26" }
   bios = "seabios"
-  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
   memory { dedicated = 2048 }
 
-  disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
-  cdrom { file_id = "${var.iso_storage}:iso/${var.ubuntu_iso}"; interface = "ide2" }
-  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  disk {
+    datastore_id = var.vm_storage
+    size         = 40
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+  cdrom {
+    file_id   = "${var.iso_storage}:iso/${var.ubuntu_iso}"
+    interface = "ide2"
+  }
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
   vga { type = "std" }
   boot_order    = ["ide2", "scsi0"]
   scsi_hardware = "virtio-scsi-pci"
@@ -710,20 +754,154 @@ resource "proxmox_virtual_environment_vm" "linux02" {
   vm_id     = 111
   name      = "lab-linux02"
   node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.linux_clients.pool_id
 
   description = "Lab Rocky Linux 9 – RHEL-compatible Linux client for enterprise Linux testing alongside Windows"
 
   operating_system { type = "l26" }
   bios = "seabios"
-  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
   memory { dedicated = 2048 }
 
-  disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
-  cdrom { file_id = "${var.iso_storage}:iso/${var.rocky_iso}"; interface = "ide2" }
-  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  disk {
+    datastore_id = var.vm_storage
+    size         = 40
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+  cdrom {
+    file_id   = "${var.iso_storage}:iso/${var.rocky_iso}"
+    interface = "ide2"
+  }
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
   vga { type = "std" }
   boot_order    = ["ide2", "scsi0"]
   scsi_hardware = "virtio-scsi-pci"
   started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# =======================================================================
+# NEW NAS / DOCUMENTATION INFRASTRUCTURE
+# =======================================================================
+
+# -----------------------------------------------------------------------
+# VM 120 – lab-nas01 (TrueNAS SCALE) [enable_nas]
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "nas" {
+  count     = var.enable_nas ? 1 : 0
+  vm_id     = 120
+  name      = "lab-nas01"
+  node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.nas_storage.pool_id
+
+  description = "TrueNAS SCALE storage VM with ZFS, SMB/NFS/iSCSI and snapshot support (10.10.10.70)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+
+  cpu {
+    cores   = 4
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
+
+  memory { dedicated = 8192 }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 32
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = var.nas_data_disk_size
+    interface    = "scsi1"
+    file_format  = "raw"
+    ssd          = false
+    discard      = "on"
+  }
+
+  cdrom {
+    file_id   = "${var.iso_storage}:iso/${var.truenas_iso}"
+    interface = "ide2"
+  }
+
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
+
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 127 – lab-docusaurus01 (dedicated documentation VM)
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "docusaurus" {
+  count     = var.enable_docusaurus ? 1 : 0
+  vm_id     = 127
+  name      = "lab-docusaurus01"
+  node_name = var.proxmox_node
+  pool_id   = proxmox_virtual_environment_pool.nas_storage.pool_id
+
+  description = "Dedicated Docusaurus documentation VM in the NAS/storage environment (10.10.10.74)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
+
+  memory { dedicated = 4096 }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 40
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  cdrom {
+    file_id   = "${var.iso_storage}:iso/${var.ubuntu_iso}"
+    interface = "ide2"
+  }
+
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
+
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+
   lifecycle { ignore_changes = [started] }
 }

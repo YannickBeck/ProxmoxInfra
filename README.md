@@ -65,11 +65,37 @@ Internet
 | Component | Role | IP | Toggle |
 |---|---|---|---|
 | lab-fw01 (VM 100) | pfSense CE router, NAT internet, firewall | 10.10.10.1 (LAN) | `enable_pfsense` |
+| lab-opnsense01 (VM 107) | OPNsense CE router, NAT, VLANs, optional IDS/IPS (recommended) | 10.10.10.1 (LAN) | `enable_opnsense` |
 | lab-ca01 (VM 104) | AD CS Enterprise Root CA — SCCM PKI, LDAPS, auto-enroll | 10.10.10.30 | `enable_ca` |
 | lab-dc02 (VM 105) | Secondary DC — AD replication, DNS redundancy, FSMO drills | 10.10.10.11 | `enable_dc02` |
 | lab-aadc01 (VM 106) | Azure AD Connect / Entra sync — Hybrid AADJ + Intune co-mgmt | 10.10.10.40 | `enable_aadconnect` |
+| lab-nas01 (VM 120) | TrueNAS Scale — ZFS, SMB/NFS and backup target | 10.10.10.70 | `enable_nas` |
+| lab-docusaurus01 (VM 127) | Dedicated Docusaurus documentation VM in NAS/storage pool | 10.10.10.74 | `enable_docusaurus` |
 | WSUS disk on SCCM | Extra data disk for Software Update Point (E:\\WSUS) | – | `wsus_content_disk_size` |
 | Packer templates | Unattended Windows golden images (VMID 9000/9001) | – | Separate build step |
+
+---
+
+## Logical Resource Pools
+
+Terraform creates stable Proxmox resource pools and assigns every existing VM to its project boundary. Pools remain present when optional workloads are disabled, making permissions, ownership and later automation predictable.
+
+| Pool | Purpose | Preferred shape |
+|---|---|---|
+| `pool-core-access` | Physical host/Raspberry Pi inventory and Packer templates | Infrastructure boundary; physical devices are not pool members |
+| `pool-sccm-lab` | AD, SCCM and Windows endpoints | Dedicated Windows VMs |
+| `pool-network-firewall` | Gateway, VLAN, IDS/IPS and DNS filtering | OPNsense recommended; pfSense alternative; optional AdGuard Home |
+| `pool-nas-storage` | Shared storage, backup target and dedicated docs VM | TrueNAS SCALE recommended; OpenMediaVault lightweight alternative; Docusaurus on VM 127 |
+| `pool-platform-services` | Reverse proxy, DMS and Git | A few Docker Compose/LXC hosts; Forgejo preferred, GitLab CE optional/heavy |
+| `pool-ai-mcp-data` | Local LLM UI, RAG, model runtime and MCP | One `lab-ai-stack01`; Qdrant/LiteLLM only when needed |
+| `pool-observability-security` | Availability, metrics, logs and SIEM | Beszel + Uptime Kuma first; Grafana/Prometheus/Loki/Wazuh optional |
+| `pool-backup-dr` | Protected backups and restore drills | Proxmox Backup Server preferred |
+| `pool-devops-automation` | Configuration, IaC and runners | Shared Ansible/Semaphore/Terraform/OpenTofu/PowerShell host |
+| `pool-linux-clients` | Cross-platform test endpoints | Ubuntu, Enterprise Linux and optional Kali |
+
+OPNsense and pfSense are strictly mutually exclusive: both would own `10.10.10.1`. Terraform rejects a configuration that enables both. The complete tree, rollout priority, status and conflict-free VMID registry are in [docs/logical-pools.md](docs/logical-pools.md); implementation status and toggles are in [docs/extensions.md](docs/extensions.md).
+
+Docusaurus runs independently on `lab-docusaurus01` (VMID 127, `10.10.10.74`) in `pool-nas-storage`. The root `docusaurus-site/` directory is retained as its application source; GitLab Pages is no longer part of the deployment path.
 
 ---
 
@@ -120,8 +146,11 @@ ProxmoxInfra/
 │
 ├── docs/
 │   ├── architecture.md                # Detailed architecture document
+│   ├── logical-pools.md               # Pool tree, priorities and VMID registry
 │   ├── network-design.md              # IP addressing, firewall rules, port list
 │   └── prerequisites.md              # Manual steps before automation
+│
+├── docusaurus-site/                   # Application source for VM 127
 │
 ├── infrastructure/
 │   ├── openstack/
@@ -135,11 +164,14 @@ ProxmoxInfra/
 │   │       ├── versions.tf            # Provider version constraints
 │   │       ├── provider.tf            # bpg/proxmox provider config
 │   │       ├── variables.tf           # All input variables
+│   │       ├── pools.tf               # Stable Proxmox resource pools
 │   │       ├── main.tf                # VM resource definitions
 │   │       ├── outputs.tf             # VM IDs and info outputs
 │   │       └── terraform.tfvars.example
 │   │
 │   └── vms/
+│       ├── nas/                         # TrueNAS VM installation and ZFS setup
+│       ├── docusaurus/                  # Dedicated docs-VM Docker deployment
 │       ├── dc/
 │       │   ├── README.md              # DC setup guide
 │       │   └── powershell/
@@ -162,26 +194,12 @@ ProxmoxInfra/
 │       ├── wol-api.py                 # Flask REST API for remote WOL
 │       └── wol-api.service            # systemd unit for WOL API
 │
-├── ansible/
+└── ansible/
 │   ├── README.md
 │   ├── inventory/
 │   │   └── lab.yml.example
 │   └── playbooks/
 │       ├── dc.yml / dc02.yml / sccm.yml / ca.yml / wsus.yml
-│
-├── docs/
-│   ├── architecture.md
-│   ├── extensions.md                  # Guide to all optional extension VMs
-│   ├── network-design.md
-│   └── prerequisites.md
-│
-└── infrastructure/
-    ├── azuread-connect/               # Azure AD Connect (extension)
-    ├── packer/                        # Unattended Windows templates (optional)
-    ├── proxmox/terraform/             # Terraform VM provisioning
-    └── vms/
-        ├── ca/       ├── client/  ├── dc/
-        ├── dc02/     ├── pfsense/ └── sccm/
 ```
 
 ---
@@ -190,14 +208,16 @@ ProxmoxInfra/
 
 ### Lab Subnet: 10.10.10.0/24
 
-All VMs communicate on an isolated internal bridge (`vmbr1`) with no direct internet access. The Proxmox host acts as the default gateway at `10.10.10.1`.
+All VMs communicate on the internal bridge `vmbr1`. OPNsense, pfSense or—when neither firewall is enabled—the Proxmox host owns the default gateway `10.10.10.1`.
 
 | Host | IP | Role |
 |---|---|---|
-| Proxmox (vmbr1) | 10.10.10.1 | Default gateway for lab |
+| OPNsense, pfSense or Proxmox (vmbr1) | 10.10.10.1 | Exactly one default gateway for the lab |
 | lab-dc01 | 10.10.10.10 | DNS server, DHCP server, AD DS |
 | lab-sccm01 | 10.10.10.20 | SCCM site server, SQL Server |
 | lab-client01 | 10.10.10.50 | Test endpoint |
+| lab-nas01 | 10.10.10.70 | TrueNAS Scale storage |
+| lab-docusaurus01 | 10.10.10.74 | Independent documentation portal |
 | DHCP range | 10.10.10.100–200 | Dynamic range (from DC's DHCP) |
 
 DNS for the lab domain `lab.local` is handled by the DC at 10.10.10.10.

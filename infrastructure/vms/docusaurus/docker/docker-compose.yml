@@ -1,0 +1,10 @@
+services:
+  docusaurus:
+    container_name: lab-docusaurus
+    build:
+      context: ../../../..
+      dockerfile: infrastructure/vms/docusaurus/docker/Dockerfile
+    image: proxmoxinfra/docusaurus:local
+    restart: unless-stopped
+    ports:
+      - "${DOCUSAURUS_HTTP_PORT:-80}:80"
