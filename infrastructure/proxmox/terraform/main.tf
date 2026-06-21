@@ -306,6 +306,12 @@ resource "proxmox_virtual_environment_vm" "client" {
 # =======================================================================
 # The resources below are created only when their enable_* toggle is true
 # (all default to false). See docs/extensions.md for the full guide.
+#
+# NAS / Open-Source Services (120–123):
+#   120 – lab-nas01       : TrueNAS Scale NAS               (enable_nas)
+#   121 – lab-nginx01     : Nginx Proxy Manager              (enable_nginx)
+#   122 – lab-paperless01 : Paperless-ngx document mgmt     (enable_paperless)
+#   123 – lab-gitlab01    : GitLab CE + Pages + CI/CD       (enable_gitlab)
 # =======================================================================
 
 # -----------------------------------------------------------------------
@@ -720,6 +726,155 @@ resource "proxmox_virtual_environment_vm" "linux02" {
 
   disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
   cdrom { file_id = "${var.iso_storage}:iso/${var.rocky_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# =======================================================================
+# NAS / OPEN-SOURCE SERVICES (120–123)
+# =======================================================================
+
+# -----------------------------------------------------------------------
+# VM 120 – lab-nas01 (TrueNAS Scale)                          [enable_nas]
+# -----------------------------------------------------------------------
+# Open-source NAS running TrueNAS Scale (Debian-based, ZFS). Provides
+# SMB/NFS/iSCSI shares for the lab and acts as a backup target. The OS
+# installs to scsi0; scsi1 is a raw data disk that TrueNAS formats as a
+# ZFS pool via its web UI.  Add more scsi* disks here if you want a
+# mirrored or RAIDZ pool — TrueNAS manages all pool geometry itself.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "nas" {
+  count     = var.enable_nas ? 1 : 0
+  vm_id     = 120
+  name      = "lab-nas01"
+  node_name = var.proxmox_node
+
+  description = "Lab NAS – TrueNAS Scale, ZFS storage, SMB/NFS/iSCSI shares, backup target (10.10.10.70)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 4; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 8192 }
+
+  # TrueNAS OS disk (32 GB, separate from data pool)
+  disk {
+    datastore_id = var.vm_storage
+    size         = 32
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  # Data pool disk — TrueNAS formats this as a ZFS pool via the web UI
+  disk {
+    datastore_id = var.vm_storage
+    size         = var.nas_data_disk_size
+    interface    = "scsi1"
+    file_format  = "raw"
+    ssd          = false
+    discard      = "on"
+  }
+
+  cdrom { file_id = "${var.iso_storage}:iso/${var.truenas_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 121 – lab-nginx01 (Nginx Proxy Manager)                [enable_nginx]
+# -----------------------------------------------------------------------
+# Ubuntu 22.04 VM running Nginx Proxy Manager (NPM) in Docker. Acts as
+# the reverse proxy and SSL terminator for all internal lab web services:
+# GitLab, Paperless, and any other HTTP services. NPM provides a clean
+# web UI for managing proxy hosts and Let's Encrypt/self-signed certs.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "nginx" {
+  count     = var.enable_nginx ? 1 : 0
+  vm_id     = 121
+  name      = "lab-nginx01"
+  node_name = var.proxmox_node
+
+  description = "Lab Nginx Proxy Manager – reverse proxy + SSL termination for lab web services (10.10.10.71)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 2048 }
+
+  disk { datastore_id = var.vm_storage; size = 40; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = "${var.iso_storage}:iso/${var.ubuntu_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 122 – lab-paperless01 (Paperless-ngx)             [enable_paperless]
+# -----------------------------------------------------------------------
+# Ubuntu 22.04 VM running Paperless-ngx via Docker Compose (includes
+# PostgreSQL and Redis). Paperless provides OCR-based document ingestion,
+# tagging, full-text search, and a web UI for a paperless home office.
+# Documents on the NAS can be mounted as a consume directory.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "paperless" {
+  count     = var.enable_paperless ? 1 : 0
+  vm_id     = 122
+  name      = "lab-paperless01"
+  node_name = var.proxmox_node
+
+  description = "Lab Paperless-ngx – document management, OCR, full-text search via Docker Compose (10.10.10.72)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 2; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 4096 }
+
+  disk { datastore_id = var.vm_storage; size = 80; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = "${var.iso_storage}:iso/${var.ubuntu_iso}"; interface = "ide2" }
+  network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
+  vga { type = "std" }
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+  started       = false
+  lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 123 – lab-gitlab01 (GitLab CE)                       [enable_gitlab]
+# -----------------------------------------------------------------------
+# Ubuntu 22.04 VM running GitLab Community Edition via Docker Compose.
+# Serves as the Source of Truth: git repos, Issues, Merge Requests, and
+# GitLab CI/CD pipelines. GitLab Pages automatically publishes the
+# Docusaurus documentation site from the docusaurus-site/ repo on each
+# push to main. Requires 8 GB RAM minimum — GitLab is memory-intensive.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "gitlab" {
+  count     = var.enable_gitlab ? 1 : 0
+  vm_id     = 123
+  name      = "lab-gitlab01"
+  node_name = var.proxmox_node
+
+  description = "Lab GitLab CE – source control, CI/CD, GitLab Pages for Docusaurus docs (10.10.10.73)"
+
+  operating_system { type = "l26" }
+  bios = "seabios"
+  cpu { cores = 4; sockets = 1; type = "x86-64-v2-AES" }
+  memory { dedicated = 8192 }
+
+  disk { datastore_id = var.vm_storage; size = 100; interface = "scsi0"; file_format = "raw"; ssd = true; discard = "on" }
+  cdrom { file_id = "${var.iso_storage}:iso/${var.ubuntu_iso}"; interface = "ide2" }
   network_device { bridge = var.lab_network_bridge; model = "virtio"; enabled = true }
   vga { type = "std" }
   boot_order    = ["ide2", "scsi0"]

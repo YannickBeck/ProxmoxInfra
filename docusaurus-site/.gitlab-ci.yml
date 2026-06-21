@@ -1,0 +1,73 @@
+# =======================================================================
+# GitLab CI/CD — Docusaurus → GitLab Pages
+# =======================================================================
+# Builds the Docusaurus documentation site on every push and deploys it
+# to GitLab Pages on pushes to the main branch.
+#
+# Deployed site URL:
+#   http://pages.lab.local/<namespace>/<project>/
+#
+# Requirements:
+#   - GitLab CE with Pages enabled (gitlab_pages['enable'] = true in Omnibus)
+#   - A GitLab Runner (the built-in shared runner is sufficient)
+# =======================================================================
+
+image: node:22-alpine
+
+stages:
+  - lint
+  - build
+  - deploy
+
+cache:
+  key:
+    files:
+      - package.json
+  paths:
+    - node_modules/
+
+# -----------------------------------------------------------------------
+# Lint — Markdown lint check (runs on all branches)
+# -----------------------------------------------------------------------
+lint-markdown:
+  stage: lint
+  script:
+    - npm ci
+    - npm run lint
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+  allow_failure: true  # Lint is advisory only — remove to make it blocking
+
+# -----------------------------------------------------------------------
+# Build — Docusaurus production build (runs on all branches)
+# -----------------------------------------------------------------------
+build-docs:
+  stage: build
+  script:
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - build/
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+
+# -----------------------------------------------------------------------
+# Deploy — Publish to GitLab Pages (main branch only)
+# -----------------------------------------------------------------------
+pages:
+  stage: deploy
+  script:
+    - npm ci
+    - npm run build
+    - mv build public
+  pages: true
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  environment:
+    name: production
+    url: $CI_PAGES_URL

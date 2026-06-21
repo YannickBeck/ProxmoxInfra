@@ -146,3 +146,32 @@ enable_linux_client = false
 linux_client_count  = 1
 ubuntu_iso          = "ubuntu-22.04.4-live-server-amd64.iso"
 rocky_iso           = "Rocky-9.4-x86_64-dvd.iso"
+
+# -----------------------------------------------------------------------
+# NAS / Open-Source Services  (see docs/extensions.md#nas-services)
+# -----------------------------------------------------------------------
+# Recommended deployment order:
+#   1. enable_nas      — NAS storage backbone
+#   2. enable_nginx    — Reverse proxy (required for HTTPS on other services)
+#   3. enable_gitlab   — GitLab CE (source control + CI/CD + Pages)
+#   4. enable_paperless — Paperless-ngx (document management)
+
+# VM 120 – lab-nas01: TrueNAS Scale NAS (ZFS, SMB/NFS, backup target).
+# Download ISO: https://www.truenas.com/download-truenas-scale/
+# After install, create a ZFS pool via the TrueNAS web UI (port 80).
+enable_nas         = false
+truenas_iso        = "TrueNAS-SCALE-24.10.2.iso"
+nas_data_disk_size = 500     # GB of ZFS data pool disk
+
+# VM 121 – lab-nginx01: Nginx Proxy Manager (Docker, port 81 admin).
+# Configured via Ansible: ansible-playbook playbooks/nginx.yml
+enable_nginx = false
+
+# VM 122 – lab-paperless01: Paperless-ngx (Docker Compose, port 8000).
+# Configured via Ansible: ansible-playbook playbooks/paperless.yml
+enable_paperless = false
+
+# VM 123 – lab-gitlab01: GitLab CE (Docker Compose, ports 80/443/22).
+# Requires 8 GB RAM. Configured via Ansible: ansible-playbook playbooks/gitlab.yml
+# After setup, push docusaurus-site/ as a new GitLab project to enable Pages.
+enable_gitlab = false

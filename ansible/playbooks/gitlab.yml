@@ -1,0 +1,32 @@
+---
+# =======================================================================
+# Playbook: gitlab.yml — GitLab CE
+# =======================================================================
+# Installs Docker + Docker Compose on lab-gitlab01, then deploys
+# GitLab Community Edition as a Docker Compose stack.
+#
+# GitLab startup takes 5–10 minutes. After the container is healthy:
+#   Web UI:   http://10.10.10.73  (or via Nginx Proxy Manager)
+#   SSH clone: git clone git@10.10.10.73:<namespace>/<project>.git
+#
+# Get the initial root password:
+#   docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password
+# (valid for 24 hours; change it immediately via the web UI)
+#
+# After GitLab is up:
+#   1. Create a new project for the Docusaurus site
+#   2. Push docusaurus-site/ from this repo to that project
+#   3. GitLab CI will build and deploy the site to GitLab Pages
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/gitlab.yml
+# =======================================================================
+
+- name: Deploy GitLab CE
+  hosts: gitlab
+  gather_facts: true
+  become: true
+
+  roles:
+    - linux_base
+    - gitlab

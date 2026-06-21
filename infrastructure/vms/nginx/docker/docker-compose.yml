@@ -1,0 +1,35 @@
+---
+# =======================================================================
+# Nginx Proxy Manager — Docker Compose
+# =======================================================================
+# Deploys Nginx Proxy Manager (NPM) with a SQLite database.
+#
+# Ports:
+#   80   — HTTP proxy (all lab services)
+#   443  — HTTPS proxy (after SSL cert is configured in NPM)
+#   81   — NPM admin UI
+#
+# First login: admin@example.com / changeme
+# Change credentials immediately after first login.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f   # watch startup
+# =======================================================================
+
+services:
+  app:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+    healthcheck:
+      test: ["CMD", "/usr/bin/check-health"]
+      interval: 10s
+      timeout: 3s

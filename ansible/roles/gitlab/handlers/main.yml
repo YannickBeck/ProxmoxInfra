@@ -1,0 +1,6 @@
+---
+- name: restart gitlab
+  community.docker.docker_compose_v2:
+    project_src: "{{ gitlab_install_dir }}"
+    state: present
+    restarted: true

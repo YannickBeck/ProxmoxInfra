@@ -29,6 +29,13 @@ This document covers IP addressing, routing, DNS, DHCP, firewall rules, and port
 | lab-ca01 | 104 | 10.10.10.30 | Static | **Extension** (`enable_ca`). Enterprise Root CA. |
 | lab-aadc01 | 106 | 10.10.10.40 | Static | **Extension** (`enable_aadconnect`). Azure AD Connect. |
 | lab-client01 | 103 | 10.10.10.50 | Static or DHCP | Windows 11 client; DHCP range starts at .100 |
+| lab-client02 | 108 | 10.10.10.51 | Static or DHCP | **Extension** (`enable_client02`). Second Windows 11 client. |
+| lab-linux01 | 110 | 10.10.10.60 | Static | **Extension** (`enable_linux_client`). Ubuntu 22.04. |
+| lab-linux02 | 111 | 10.10.10.61 | Static | **Extension** (`linux_client_count=2`). Rocky Linux 9. |
+| **lab-nas01** | **120** | **10.10.10.70** | **Static** | **Extension** (`enable_nas`). TrueNAS Scale NAS. |
+| **lab-nginx01** | **121** | **10.10.10.71** | **Static** | **Extension** (`enable_nginx`). Nginx Proxy Manager. |
+| **lab-paperless01** | **122** | **10.10.10.72** | **Static** | **Extension** (`enable_paperless`). Paperless-ngx. |
+| **lab-gitlab01** | **123** | **10.10.10.73** | **Static** | **Extension** (`enable_gitlab`). GitLab CE + Pages. |
 | DHCP range | – | 10.10.10.100–200 | Dynamic | Served by lab-dc01 Windows DHCP role |
 
 ---

@@ -1,0 +1,15 @@
+---
+# =======================================================================
+# Role: nginx_proxy_manager — defaults/main.yml
+# =======================================================================
+
+npm_install_dir: /opt/nginx-proxy-manager
+npm_http_port: 80
+npm_https_port: 443
+npm_admin_port: 81
+
+# Docker image tag — pin to a specific version in production
+npm_image_tag: "latest"
+
+# Database for NPM's internal state (SQLite is default and sufficient for lab)
+npm_db_type: sqlite

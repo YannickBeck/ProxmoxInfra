@@ -1,0 +1,28 @@
+---
+# =======================================================================
+# Role: gitlab — defaults/main.yml
+# =======================================================================
+
+gitlab_install_dir: /opt/gitlab
+
+# External URL that GitLab is reached at.
+# Set this to your Nginx Proxy Manager hostname or the VM's IP.
+# Examples:
+#   http://10.10.10.73          — direct IP access (HTTP only)
+#   http://gitlab.lab.local     — internal DNS name via Nginx
+#   https://gitlab.example.com  — HTTPS via Nginx + cert
+gitlab_external_url: "http://10.10.10.73"
+
+# SSH port exposed by GitLab for git clone over SSH (maps to host port)
+gitlab_ssh_port: 2222
+
+# SMTP settings (optional — configure to enable GitLab email notifications)
+gitlab_smtp_enabled: false
+gitlab_smtp_host: ""
+gitlab_smtp_port: 587
+gitlab_smtp_from: "gitlab@lab.local"
+
+# GitLab Pages (required to host the Docusaurus documentation site)
+# Pages are served from a separate port or via Nginx Proxy Manager wildcard.
+gitlab_pages_enabled: true
+gitlab_pages_external_url: "http://pages.lab.local"

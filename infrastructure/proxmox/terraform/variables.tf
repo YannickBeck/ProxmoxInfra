@@ -209,3 +209,48 @@ variable "rocky_iso" {
   default     = "Rocky-9.4-x86_64-dvd.iso"
   description = "Filename of the Rocky Linux 9 DVD ISO in Proxmox local storage. Download from https://rockylinux.org/download."
 }
+
+# -----------------------------------------------------------------------
+# NAS / Open-Source Services (enable_nas, enable_nginx, enable_paperless, enable_gitlab)
+# -----------------------------------------------------------------------
+
+variable "enable_nas" {
+  type        = bool
+  default     = false
+  description = "Create VM 120 (lab-nas01), a TrueNAS Scale NAS providing ZFS storage, SMB/NFS/iSCSI shares, and a backup target for the lab."
+}
+
+variable "truenas_iso" {
+  type        = string
+  default     = "TrueNAS-SCALE-24.10.2.iso"
+  description = "Filename of the TrueNAS Scale installer ISO in Proxmox local storage. Download from https://www.truenas.com/download-truenas-scale/."
+}
+
+variable "nas_data_disk_size" {
+  type        = number
+  default     = 500
+  description = "Size in GB of the NAS data pool disk (scsi1) on lab-nas01. TrueNAS formats and manages this as a ZFS pool via its web UI. 100 GB minimum for a lab."
+
+  validation {
+    condition     = var.nas_data_disk_size >= 50
+    error_message = "nas_data_disk_size must be at least 50 GB."
+  }
+}
+
+variable "enable_nginx" {
+  type        = bool
+  default     = false
+  description = "Create VM 121 (lab-nginx01), an Ubuntu VM running Nginx Proxy Manager in Docker. Acts as the reverse proxy and SSL terminator for all internal lab HTTP services (GitLab, Paperless, etc.)."
+}
+
+variable "enable_paperless" {
+  type        = bool
+  default     = false
+  description = "Create VM 122 (lab-paperless01), an Ubuntu VM running Paperless-ngx via Docker Compose (with PostgreSQL + Redis). Provides OCR document ingestion, tagging, and full-text search."
+}
+
+variable "enable_gitlab" {
+  type        = bool
+  default     = false
+  description = "Create VM 123 (lab-gitlab01), an Ubuntu VM running GitLab CE via Docker Compose. Provides source control, CI/CD pipelines, and GitLab Pages for the Docusaurus documentation site."
+}

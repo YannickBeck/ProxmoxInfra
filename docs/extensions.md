@@ -6,6 +6,8 @@ This document describes the optional extension VMs that build on top of the base
 
 ## Extension Overview
 
+### Windows Lab Extensions
+
 | VM | VMID | Toggle | Hostname | IP | Role | Guide |
 |---|---|---|---|---|---|---|
 | pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall, VLAN-ready | [pfsense/README.md](../infrastructure/vms/pfsense/README.md) |
@@ -14,11 +16,21 @@ This document describes the optional extension VMs that build on top of the base
 | Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra ID sync, Hybrid AADJ, co-mgmt | [azuread-connect/README.md](../infrastructure/azuread-connect/README.md) |
 | WSUS disk on SCCM | – | `wsus_content_disk_size` | lab-sccm01 | – | Extra disk (E:\\WSUS) for Software Update Point | [sccm/README.md](../infrastructure/vms/sccm/README.md#software-update-point) |
 
+### NAS / Open-Source Services
+
+| VM | VMID | Toggle | Hostname | IP | Role | Guide |
+|---|---|---|---|---|---|---|
+| TrueNAS Scale | 120 | `enable_nas` | lab-nas01 | 10.10.10.70 | ZFS NAS, SMB/NFS/iSCSI, backup target | [nas/README.md](../infrastructure/vms/nas/README.md) |
+| Nginx Proxy Manager | 121 | `enable_nginx` | lab-nginx01 | 10.10.10.71 | Reverse proxy + SSL termination | [nginx/README.md](../infrastructure/vms/nginx/README.md) |
+| Paperless-ngx | 122 | `enable_paperless` | lab-paperless01 | 10.10.10.72 | Document management, OCR, search | [paperless/README.md](../infrastructure/vms/paperless/README.md) |
+| GitLab CE | 123 | `enable_gitlab` | lab-gitlab01 | 10.10.10.73 | Source control, CI/CD, GitLab Pages | [gitlab/README.md](../infrastructure/vms/gitlab/README.md) |
+
 Also optional — not a VM:
 
 | Component | Guide |
 |---|---|
 | Packer golden-image templates | [packer/README.md](../infrastructure/packer/README.md) |
+| Docusaurus documentation site | [docusaurus-site/](../docusaurus-site/) |
 
 ---
 
@@ -47,9 +59,29 @@ Base lab (DC01 + SCCM + Client)
     ├─ 5. WSUS disk (wsus_content_disk_size > 0) + setup-wsus-sup.ps1
     │       Requires: pfSense (internet for sync), DC01 (domain), SCCM installed.
     │
-    └─ 6. Azure AD Connect (enable_aadconnect)
-            Requires: pfSense (internet to Entra), DC01, CA (optional but recommended for LDAPS).
-            Required before: Hybrid AADJ, Intune co-management.
+    ├─ 6. Azure AD Connect (enable_aadconnect)
+    │       Requires: pfSense (internet to Entra), DC01, CA (optional but recommended for LDAPS).
+    │       Required before: Hybrid AADJ, Intune co-management.
+    │
+    │
+    │   ── NAS / Open-Source Services ─────────────────────────────────────
+    │
+    ├─ 7. TrueNAS Scale NAS (enable_nas)
+    │       Deploy first in the NAS group — other services can use it for storage.
+    │       Configuration is done via the TrueNAS web UI (not Ansible).
+    │       Required before: Paperless consume-from-NAS, GitLab backups-to-NAS.
+    │
+    ├─ 8. Nginx Proxy Manager (enable_nginx)
+    │       Reverse proxy for all HTTP services in the lab.
+    │       Deploy before finalising URLs for GitLab and Paperless.
+    │
+    ├─ 9. GitLab CE (enable_gitlab)
+    │       Source control, CI/CD, GitLab Pages.
+    │       After deploy, push docusaurus-site/ to publish the docs portal.
+    │
+    └─ 10. Paperless-ngx (enable_paperless)
+            Document management with OCR.
+            Optionally mount NAS SMB share as the consume directory.
 ```
 
 ---
@@ -146,3 +178,111 @@ Synchronises `lab.local` Active Directory into Microsoft Entra ID (formerly Azur
 **Requires:** A Microsoft Entra / M365 tenant (free dev tenant works for hybrid join; Intune needs a license or trial), and internet access from lab-aadc01 (via pfSense NAT).
 
 Full steps in `infrastructure/azuread-connect/README.md`.
+
+---
+
+## 7 – TrueNAS Scale NAS
+
+**Toggle:** `enable_nas = true`
+
+TrueNAS Scale is an open-source NAS OS (Debian + OpenZFS) that provides enterprise-grade storage for the lab. It acts as a central storage backbone: Paperless-ngx consumes documents from a NAS share, GitLab writes backups to the NAS, and general file shares are accessible via SMB from all lab VMs.
+
+**What it provides:**
+- ZFS pool with copy-on-write, checksums, snapshots, and optional RAIDZ
+- SMB shares (Windows-compatible, AD-integrated)
+- NFS shares (Linux-compatible)
+- iSCSI block storage (optional)
+- Built-in Docker app catalog (run additional containers on the NAS itself)
+- Periodic ZFS snapshots for point-in-time recovery
+
+**Terraform creates:**
+- scsi0 (32 GB) — TrueNAS OS disk (separate from data)
+- scsi1 (`nas_data_disk_size` GB, default 500 GB) — raw data pool disk
+
+**After install:** Configure everything via the TrueNAS web UI at `http://10.10.10.70`. See `infrastructure/vms/nas/README.md` for the full step-by-step.
+
+---
+
+## 8 – Nginx Proxy Manager
+
+**Toggle:** `enable_nginx = true`
+
+Nginx Proxy Manager (NPM) is an open-source reverse proxy with a clean web UI. It routes HTTP/HTTPS traffic from a single IP (`10.10.10.71`) to internal lab services by hostname, and manages SSL certificates.
+
+**What it enables:**
+- `gitlab.lab.local` → lab-gitlab01 (VM 123)
+- `paperless.lab.local` → lab-paperless01 (VM 122)
+- `nas.lab.local` → lab-nas01 (VM 120)
+- `*.pages.lab.local` → GitLab Pages (Docusaurus docs)
+- Self-signed or Let's Encrypt SSL certificates per host
+
+**Setup:** Run `ansible-playbook ansible/playbooks/nginx.yml`, then configure proxy hosts via the NPM web UI at `http://10.10.10.71:81`. Full steps in `infrastructure/vms/nginx/README.md`.
+
+---
+
+## 9 – GitLab CE
+
+**Toggle:** `enable_gitlab = true`
+
+GitLab Community Edition is the lab's source of truth. It hosts all git repositories, Issues, Merge Requests, and CI/CD pipelines — and specifically publishes the **Docusaurus documentation site** via GitLab Pages.
+
+**The Docusaurus workflow:**
+```
+Design (Claude Design mockups)
+    → Export as PNG/SVG
+    → Commit to docusaurus-site/static/img/claude-design/
+    → Document in docusaurus-site/docs/design/
+    → git push → GitLab CI builds Docusaurus
+    → GitLab Pages publishes the site
+```
+
+The `docusaurus-site/` directory in this repo is a ready-to-push Docusaurus project. After GitLab is running, create a new project and push it as described in `infrastructure/vms/gitlab/README.md`.
+
+**Resource requirement:** 8 GB RAM minimum (GitLab is memory-intensive). The `docker-compose.yml` uses reduced Puma/Sidekiq workers to fit within the VM's 8 GB.
+
+Full steps in `infrastructure/vms/gitlab/README.md`.
+
+---
+
+## 10 – Paperless-ngx
+
+**Toggle:** `enable_paperless = true`
+
+Paperless-ngx is an open-source Document Management System (DMS). Drop a scanned PDF into the consume folder and Paperless runs OCR (Tesseract), extracts text, auto-tags by correspondent and document type, and makes everything full-text searchable.
+
+**Stack:** Paperless web + PostgreSQL + Redis, all running via Docker Compose.
+
+**Integration with TrueNAS:**
+- Mount the NAS `paperless` SMB share as the consume directory
+- Paperless auto-imports new documents from the NAS share
+- Exports/backups are written back to the NAS
+
+**Setup:** Run `ansible-playbook ansible/playbooks/paperless.yml`. Full steps in `infrastructure/vms/paperless/README.md`.
+
+---
+
+## 11 – Docusaurus Documentation Site
+
+**Not a VM — a GitLab project.** See `docusaurus-site/` in the repo root.
+
+The `docusaurus-site/` directory is a complete, ready-to-run Docusaurus 3 project pre-configured for GitLab Pages deployment. It serves as the lab's documentation portal and knowledge base.
+
+**Structure:**
+```
+docusaurus-site/
+├─ docs/
+│  ├─ product/       # Vision, roadmap, user stories
+│  ├─ design/        # Claude Design exports, design system
+│  ├─ architecture/  # ADRs, system overview
+│  ├─ api/           # API documentation
+│  └─ runbooks/      # Operational runbooks
+├─ static/img/claude-design/  # Design mockups and exports
+├─ .gitlab-ci.yml    # Builds and deploys to GitLab Pages
+└─ docusaurus.config.ts
+```
+
+**To publish:**
+1. Create a project on lab-gitlab01
+2. `cd docusaurus-site && git init && git push` to that project
+3. Update `url` and `baseUrl` in `docusaurus.config.ts`
+4. GitLab CI auto-deploys on every push to `main`

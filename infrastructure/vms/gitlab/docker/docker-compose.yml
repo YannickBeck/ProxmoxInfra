@@ -1,0 +1,68 @@
+---
+# =======================================================================
+# GitLab CE — Docker Compose
+# =======================================================================
+# Deploys GitLab Community Edition as a single container.
+#
+# Ports:
+#   80    — GitLab web UI (HTTP)
+#   443   — GitLab web UI (HTTPS, if configured)
+#   2222  — GitLab SSH (git clone over SSH)
+#   8090  — GitLab Pages
+#
+# Configuration via GITLAB_OMNIBUS_CONFIG environment variable.
+# Replace GITLAB_EXTERNAL_URL with your actual URL before starting.
+#
+# Usage:
+#   nano .env   # set GITLAB_EXTERNAL_URL
+#   docker compose pull
+#   docker compose up -d
+#   # Wait 5–10 minutes for GitLab to initialise
+#   docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password
+# =======================================================================
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    restart: unless-stopped
+    hostname: gitlab.lab.local
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url '${GITLAB_EXTERNAL_URL:-http://10.10.10.73}'
+        gitlab_rails['time_zone'] = 'Europe/Berlin'
+
+        # GitLab Pages — serves the Docusaurus documentation site
+        pages_external_url '${GITLAB_PAGES_EXTERNAL_URL:-http://pages.lab.local}'
+        gitlab_pages['enable'] = true
+        gitlab_pages['inplace_chroot'] = true
+
+        # SSH clone port
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+
+        # Reduce memory usage for lab environment
+        puma['worker_processes'] = 2
+        sidekiq['concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        node_exporter['enable'] = false
+        redis_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        pgbouncer_exporter['enable'] = false
+        grafana['enable'] = false
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2222:22"
+      - "8090:8090"
+    volumes:
+      - ./config:/etc/gitlab
+      - ./logs:/var/log/gitlab
+      - ./data:/var/opt/gitlab
+    shm_size: "256m"
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      interval: 60s
+      timeout: 30s
+      retries: 10
+      start_period: 300s

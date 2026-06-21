@@ -1,0 +1,24 @@
+---
+# =======================================================================
+# Playbook: paperless.yml — Paperless-ngx
+# =======================================================================
+# Installs Docker + Docker Compose on lab-paperless01, then deploys
+# Paperless-ngx with PostgreSQL and Redis as Docker Compose services.
+#
+# After deployment:
+#   Web UI:  http://10.10.10.72:8000
+#   Run `docker compose exec webserver createsuperuser` to create the
+#   first admin user, or set PAPERLESS_ADMIN_USER/PASS in the .env.
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/paperless.yml
+# =======================================================================
+
+- name: Deploy Paperless-ngx
+  hosts: paperless
+  gather_facts: true
+  become: true
+
+  roles:
+    - linux_base
+    - paperless

@@ -1,0 +1,24 @@
+---
+# =======================================================================
+# Playbook: nginx.yml — Nginx Proxy Manager
+# =======================================================================
+# Installs Docker + Docker Compose on lab-nginx01, then deploys Nginx
+# Proxy Manager (NPM) as a Docker Compose stack.
+#
+# NPM provides a web UI for managing reverse proxy hosts and SSL certs.
+# After deployment:
+#   Admin UI:   http://10.10.10.71:81
+#   Default login: admin@example.com / changeme  (change on first login)
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/nginx.yml
+# =======================================================================
+
+- name: Deploy Nginx Proxy Manager
+  hosts: nginx
+  gather_facts: true
+  become: true
+
+  roles:
+    - linux_base
+    - nginx_proxy_manager

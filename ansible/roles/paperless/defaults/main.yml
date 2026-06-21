@@ -1,0 +1,29 @@
+---
+# =======================================================================
+# Role: paperless — defaults/main.yml
+# =======================================================================
+
+paperless_install_dir: /opt/paperless-ngx
+
+# Paperless web UI port (inside the lab; expose via Nginx Proxy Manager)
+paperless_port: 8000
+
+# Time zone for OCR and date parsing — must match tzdata string
+paperless_timezone: "Europe/Berlin"
+
+# OCR language(s) — space-separated Tesseract language codes
+# Common: deu (German), eng (English)
+paperless_ocr_languages: "deu+eng"
+
+# Secret key — override this in vault or group_vars with a random string
+paperless_secret_key: "change-me-to-a-long-random-string"
+
+# Admin account created on first run (optional — can also use createsuperuser)
+paperless_admin_user: "admin"
+paperless_admin_password: "changeme"
+paperless_admin_mail: "admin@lab.local"
+
+# PostgreSQL settings
+paperless_db_name: "paperless"
+paperless_db_user: "paperless"
+paperless_db_password: "paperless-db-pass"
