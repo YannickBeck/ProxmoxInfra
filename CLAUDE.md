@@ -375,6 +375,47 @@ packer build .
 
 ---
 
+## Nutanix AHV (Alternative Hypervisor)
+
+The same lab VMs can be provisioned on a **Nutanix AHV** cluster instead of Proxmox. A separate Terraform module lives at `infrastructure/nutanix/terraform/` and uses the `nutanix/nutanix` provider.
+
+### Nutanix Quick Start
+
+```bash
+cd infrastructure/nutanix/terraform
+
+cp terraform.tfvars.example terraform.tfvars
+nano terraform.tfvars   # fill in Prism endpoint, cluster UUID, subnet UUIDs, image UUIDs
+
+export TF_VAR_nutanix_password="your-prism-password"
+export TF_VAR_admin_password="LabAdmin!P@ssw0rd1"
+export TF_VAR_safe_mode_password="SafeMode!P@ssw0rd1"
+
+terraform init
+terraform plan
+terraform apply
+```
+
+### Key differences vs Proxmox
+
+| Proxmox | Nutanix AHV |
+|---|---|
+| `vmbr1` (Linux bridge, no uplink) | VLAN-backed subnet in Prism |
+| `iso_storage = "local"` | Image UUID from Nutanix image service |
+| `vm_storage = "local-lvm"` | Storage container (auto-managed) |
+| VirtIO drivers ISO required | Not needed — AHV includes VirtIO |
+| `started = false` | `power_state = "OFF"` |
+| Integer VMID (101, 102 ...) | UUID (long hex) |
+| Wake-on-LAN via Raspberry Pi | Prism API `POST /vms/{uuid}/power_on` |
+
+### All extension toggles work identically
+
+All the same `enable_*` variables in `terraform.tfvars` apply — the Nutanix module supports all 14 VMs with the same toggle names. Ansible playbooks and PowerShell scripts are **unchanged** since they connect over WinRM/SSH, not through the hypervisor API.
+
+See `infrastructure/nutanix/README.md` for prerequisites, subnet setup, image upload, and Calm integration.
+
+---
+
 ## SCCM Prerequisites Notes
 
 SCCM (Configuration Manager Current Branch) requires several components that must be downloaded from Microsoft during installation:

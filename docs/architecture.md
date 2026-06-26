@@ -84,6 +84,26 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 
 ---
 
+## Alternative Hypervisor – Nutanix AHV
+
+The VM configuration, IP addressing, Ansible playbooks, and PowerShell scripts in this repo are **hypervisor-agnostic**. A parallel Terraform module for **Nutanix AHV** lives at `infrastructure/nutanix/terraform/` and creates the same 14 VMs using the `nutanix/nutanix` provider.
+
+Key differences when using Nutanix:
+
+| Concept | Proxmox | Nutanix AHV |
+|---|---|---|
+| Network isolation | Linux bridge `vmbr1` (no uplink) | VLAN-backed subnet in Prism |
+| Driver ISO | VirtIO drivers ISO required | Not needed (AHV includes VirtIO) |
+| ISO storage | Proxmox local storage | Nutanix image service |
+| VM identification | Integer VMID | UUID |
+| Remote power | Raspberry Pi WOL | Prism API `power_on` |
+
+After provisioning on Nutanix, use the same Ansible inventory (`ansible/inventory/lab.yml`) with the same IP addresses — only the hypervisor-facing management changes.
+
+See `infrastructure/nutanix/README.md` for the full Nutanix setup guide.
+
+---
+
 ## Network Bridges
 
 ### vmbr0 – WAN / Home LAN Bridge

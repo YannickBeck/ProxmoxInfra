@@ -1,0 +1,68 @@
+# ============================================================
+# Nutanix Lab – Terraform variables example
+# ============================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit secrets.
+# ============================================================
+
+# ---- Nutanix connection ----
+# Prism Central or Prism Element IP (no port, no /api/ path)
+nutanix_endpoint = "192.168.1.150"
+nutanix_username = "admin"
+nutanix_password = "changeme"   # use `export TF_VAR_nutanix_password=...` instead of hardcoding
+nutanix_insecure = true         # set false in production with a trusted cert
+
+# ---- Cluster ----
+# Find cluster UUID in Prism Element → Settings → Cluster Details
+# or from the URL: https://<prism-ip>:9440/console/#login → cluster UUID shown in dashboard URL
+nutanix_cluster_uuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# ---- Networking ----
+# Lab subnet: isolated VLAN with no internet route — equivalent to vmbr1 on Proxmox.
+# Create in Prism → Network → Create Subnet. Assign a VLAN ID that is NOT in use elsewhere.
+lab_subnet_uuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# WAN/uplink subnet: the home-LAN network. Only needed for pfSense or OPNsense router VMs.
+# Leave blank if not deploying a router VM.
+wan_subnet_uuid = ""
+
+# ---- Image UUIDs ----
+# Upload ISOs via Prism → Settings → Image Configuration → Upload Image.
+# AHV (KVM) includes VirtIO drivers natively — no separate VirtIO ISO needed.
+# After upload, click the image → copy the UUID from the URL or Details pane.
+windows_server_image_uuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+windows_11_image_uuid     = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Required only if deploying a router VM:
+# pfsense_image_uuid  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# opnsense_image_uuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Required only if enable_linux_client = true:
+# ubuntu_image_uuid = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# rocky_image_uuid  = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# ---- Credentials ----
+safe_mode_password = "SafeMode!P@ssw0rd1"   # DSRM password for the DC
+admin_password     = "LabAdmin!P@ssw0rd1"   # Local Administrator on all Windows VMs
+
+# ---- Domain ----
+domain_name    = "lab.local"
+domain_netbios = "LAB"
+
+# ============================================================
+# Optional extension VMs (all default false)
+# See docs/extensions.md for full descriptions.
+# ============================================================
+
+# enable_pfsense    = false   # lab-fw01  — pfSense CE router (NATed internet for lab)
+# enable_opnsense   = false   # lab-opnsense01 — OPNsense alternative (mutex with pfsense)
+# enable_ca         = false   # lab-ca01  — Single-tier Enterprise Root CA
+# enable_twotier_pki = false  # lab-rootca01 + lab-subca01 — two-tier PKI (mutex with enable_ca)
+# enable_dc02       = false   # lab-dc02  — Secondary DC, AD replication, FSMO practice
+# enable_aadconnect = false   # lab-aadc01 — Entra Connect Sync (full hybrid identity engine)
+# enable_cloudsync  = false   # lab-cloudsync01 — Entra Cloud Sync (lightweight agent)
+# enable_client02   = false   # lab-client02 — second Windows 11 client
+# enable_linux_client = false # lab-linux01 [+ lab-linux02]  Ubuntu 22.04 [+ Rocky Linux 9]
+# linux_client_count  = 1     # 1 = Ubuntu only; 2 = Ubuntu + Rocky
+
+# wsus_content_disk_size = 0  # Extra disk on SCCM for WSUS/SUP content (GB, 0 = disabled)

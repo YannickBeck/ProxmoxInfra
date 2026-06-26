@@ -174,11 +174,13 @@ ProxmoxInfra/
 │
 └── infrastructure/
     ├── azuread-connect/               # Azure AD Connect (extension)
+    ├── entra-cloudsync/               # Entra Cloud Sync agent (extension)
+    ├── nutanix/terraform/             # Terraform for Nutanix AHV (alternative hypervisor)
     ├── packer/                        # Unattended Windows templates (optional)
-    ├── proxmox/terraform/             # Terraform VM provisioning
+    ├── proxmox/terraform/             # Terraform for Proxmox VE
     └── vms/
-        ├── ca/       ├── client/  ├── dc/
-        ├── dc02/     ├── pfsense/ └── sccm/
+        ├── ca/    ├── client/  ├── dc/    ├── dc02/
+        ├── pfsense/ ├── pki/  ├── opnsense/ └── sccm/
 ```
 
 ---
