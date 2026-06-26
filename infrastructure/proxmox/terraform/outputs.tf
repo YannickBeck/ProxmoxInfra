@@ -75,3 +75,18 @@ output "linux02_vmid" {
   description = "VM ID of lab-linux02 (Rocky Linux 9). Null when linux_client_count < 2."
   value       = var.enable_linux_client && var.linux_client_count >= 2 ? proxmox_virtual_environment_vm.linux02[0].vm_id : null
 }
+
+output "cloudsync_vmid" {
+  description = "VM ID of lab-cloudsync01 (Entra Cloud Sync). Null when enable_cloudsync = false."
+  value       = var.enable_cloudsync ? proxmox_virtual_environment_vm.cloudsync[0].vm_id : null
+}
+
+output "rootca_vmid" {
+  description = "VM ID of lab-rootca01 (offline Root CA). Null when enable_twotier_pki = false."
+  value       = var.enable_twotier_pki ? proxmox_virtual_environment_vm.rootca[0].vm_id : null
+}
+
+output "subca_vmid" {
+  description = "VM ID of lab-subca01 (Enterprise Issuing CA). Null when enable_twotier_pki = false."
+  value       = var.enable_twotier_pki ? proxmox_virtual_environment_vm.subca[0].vm_id : null
+}

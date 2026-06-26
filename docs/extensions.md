@@ -11,7 +11,9 @@ This document describes the optional extension VMs that build on top of the base
 | pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall, VLAN-ready | [pfsense/README.md](../infrastructure/vms/pfsense/README.md) |
 | Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI for SCCM/LDAPS/IIS | [ca/README.md](../infrastructure/vms/ca/README.md) |
 | Secondary DC | 105 | `enable_dc02` | lab-dc02 | 10.10.10.11 | AD replication, DNS redundancy, FSMO | [dc02/README.md](../infrastructure/vms/dc02/README.md) |
-| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra ID sync, Hybrid AADJ, co-mgmt | [azuread-connect/README.md](../infrastructure/azuread-connect/README.md) |
+| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra ID sync (Connect Sync), Hybrid AADJ, co-mgmt | [azuread-connect/README.md](../infrastructure/azuread-connect/README.md) |
+| Entra Cloud Sync | 109 | `enable_cloudsync` | lab-cloudsync01 | 10.10.10.41 | Lightweight cloud-side hybrid identity agent | [entra-cloudsync/README.md](../infrastructure/entra-cloudsync/README.md) |
+| Two-tier PKI | 112 + 113 | `enable_twotier_pki` | lab-rootca01 / lab-subca01 | 10.10.10.31 / .32 | Offline Root CA + Enterprise Issuing CA | [pki/README.md](../infrastructure/vms/pki/README.md) |
 | WSUS disk on SCCM | – | `wsus_content_disk_size` | lab-sccm01 | – | Extra disk (E:\\WSUS) for Software Update Point | [sccm/README.md](../infrastructure/vms/sccm/README.md#software-update-point) |
 
 Also optional — not a VM:
@@ -36,8 +38,10 @@ Base lab (DC01 + SCCM + Client)
     ├─ 2. Packer (optional, replaces manual ISO install)
     │       Run packer build before terraform apply with clones.
     │
-    ├─ 3. Enterprise Root CA (enable_ca)
-    │       Requires: DC01 up and domain ready.
+    ├─ 3. PKI — choose ONE:
+    │       a) Single-tier Enterprise Root CA (enable_ca, VM 104) — simple.
+    │       b) Two-tier PKI (enable_twotier_pki, VMs 112+113) — enterprise-realistic.
+    │       Requires: DC01 up and domain ready (for the Enterprise/Issuing CA).
     │       Required before: SCCM PKI mode, LDAPS, proper Intune certs.
     │
     ├─ 4. Secondary DC (enable_dc02)
@@ -47,9 +51,13 @@ Base lab (DC01 + SCCM + Client)
     ├─ 5. WSUS disk (wsus_content_disk_size > 0) + setup-wsus-sup.ps1
     │       Requires: pfSense (internet for sync), DC01 (domain), SCCM installed.
     │
-    └─ 6. Azure AD Connect (enable_aadconnect)
-            Requires: pfSense (internet to Entra), DC01, CA (optional but recommended for LDAPS).
-            Required before: Hybrid AADJ, Intune co-management.
+    ├─ 6. Hybrid identity — choose ONE (or both, to compare):
+    │       a) Azure AD Connect / Entra Connect Sync (enable_aadconnect, VM 106) — full engine.
+    │       b) Entra Cloud Sync (enable_cloudsync, VM 109) — lightweight cloud-side agent.
+    │       Requires: internet to Entra, DC01, CA (recommended for LDAPS).
+    │       Required before: Hybrid AADJ, Intune co-management.
+    │
+    └─ 7. (Repeat for the other identity/PKI option only if you want to compare.)
 ```
 
 ---
@@ -146,3 +154,69 @@ Synchronises `lab.local` Active Directory into Microsoft Entra ID (formerly Azur
 **Requires:** A Microsoft Entra / M365 tenant (free dev tenant works for hybrid join; Intune needs a license or trial), and internet access from lab-aadc01 (via pfSense NAT).
 
 Full steps in `infrastructure/azuread-connect/README.md`.
+
+---
+
+## 7 – Entra Cloud Sync (Lightweight Hybrid Identity)
+
+**Toggle:** `enable_cloudsync = true`
+
+Deploys `lab-cloudsync01` (VM 109, 10.10.10.41), a domain-joined member server running the **Microsoft Entra Cloud Sync** provisioning agent. Cloud Sync is Microsoft's modern, lightweight alternative to the full Entra Connect Sync engine (extension 6). It syncs `lab.local` users and groups into Microsoft Entra ID, but the sync configuration and rules live **in the cloud** (the Entra admin center) rather than in a heavyweight on-prem application.
+
+**Cloud Sync vs Connect Sync — when to use which:**
+
+| | Entra Cloud Sync (VM 109) | Entra Connect Sync (VM 106) |
+|---|---|---|
+| Agent footprint | Lightweight provisioning agent | Full sync engine + SQL LocalDB |
+| Configuration | Cloud-side (Entra admin center) | On-prem (Synchronization Service Manager) |
+| Multiple disconnected forests | Yes (native) | Complex (single instance) |
+| High availability | Yes (multiple agents, active-active) | Staging server (active-passive) |
+| Device writeback / Hybrid AADJ | Limited | Full support |
+| Group writeback, exchange hybrid | Not supported | Supported |
+| Best for | Simpler tenants, multi-forest, HA | Full feature set, device sync, complex filtering |
+
+**Why deploy it in the lab:** Cloud Sync is the direction Microsoft is steering most hybrid customers. Standing up both VM 106 and VM 109 lets you compare the two approaches side by side — a genuinely useful exercise for an SCCM/Intune professional planning a real migration. (Do not sync the *same* objects with both agents simultaneously; scope them to different OUs if running both.)
+
+**Important:** Like Connect Sync, Cloud Sync needs a **routable UPN suffix** — the non-routable `@lab.local` suffix must be supplemented with a verified domain or `<tenant>.onmicrosoft.com` suffix before sync.
+
+**Setup:** `ansible-playbook -i inventory/lab.yml playbooks/cloudsync.yml` (or run `install-cloudsync.ps1`), then finish the configuration cloud-side. Full steps in `infrastructure/entra-cloudsync/README.md`.
+
+**Requires:** A Microsoft Entra / M365 tenant and internet access from lab-cloudsync01 (via pfSense/OPNsense NAT).
+
+---
+
+## 8 – Two-Tier PKI (Offline Root CA + Enterprise Issuing CA)
+
+**Toggle:** `enable_twotier_pki = true`
+
+Deploys a realistic **two-tier PKI hierarchy** — the design used in virtually every production enterprise:
+
+- **lab-rootca01** (VM 112, 10.10.10.31) – an **offline standalone Root CA** in a workgroup. It signs exactly one thing (the issuing CA's certificate) and is then powered off and kept offline so its private key can never be compromised over the network.
+- **lab-subca01** (VM 113, 10.10.10.32) – a domain-joined **Enterprise Subordinate / Issuing CA** that handles all day-to-day certificate issuance (auto-enrollment, SCCM PKI, LDAPS, web server certs).
+
+```
+        ┌────────────────────────────┐
+        │   lab-rootca01 (VM 112)    │   Offline · Workgroup
+        │   Standalone Root CA       │   LAB-Offline-Root-CA
+        │   20-year cert · OFFLINE   │   (powered off after signing)
+        └─────────────┬──────────────┘
+                      │ signs the issuing CA certificate (manual transfer)
+        ┌─────────────▼──────────────┐
+        │   lab-subca01 (VM 113)     │   Online · Domain-joined
+        │   Enterprise Issuing CA    │   LAB-Issuing-CA
+        │   Auto-enrollment, SCCM,   │
+        │   LDAPS, web certs         │
+        └────────────────────────────┘
+```
+
+**Two-tier vs the single-tier Enterprise Root CA (extension 3):** The single-tier `enable_ca` (VM 104) is simpler — one domain-joined Enterprise Root CA does everything — and is perfectly fine for a quick lab. The two-tier design is what you would actually build in production, where keeping the root key offline is a hard requirement. **Pick one or the other — do not enable both `enable_ca` and `enable_twotier_pki`**, since having two roots in the same domain is messy and serves no purpose.
+
+**The key step — the offline cert exchange:** Because the root is offline, the issuing CA's `Install-AdcsCertificationAuthority` produces a certificate *request* (`.req`) instead of completing immediately. You manually carry that request to the offline root, sign it, carry the issued certificate back, install it, and start the CA service. The full `certreq`/`certutil` command sequence is documented in `infrastructure/vms/pki/README.md`.
+
+**What it enables (same as the single-tier CA, but enterprise-grade):**
+- SCCM PKI / HTTPS mode with a trusted issuing chain
+- LDAPS on the domain controllers
+- Auto-enrolled client authentication and computer certificates via GPO
+- Web server certificates for IIS, WSUS, and internal HTTPS services
+
+**Setup:** `ansible-playbook -i inventory/lab.yml playbooks/pki-root.yml` then `playbooks/pki-sub.yml` (with the manual cert-exchange step in between), or run `setup-rootca.ps1` and `setup-subca.ps1`. Full steps in `infrastructure/vms/pki/README.md`.

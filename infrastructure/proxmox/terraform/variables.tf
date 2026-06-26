@@ -209,3 +209,21 @@ variable "rocky_iso" {
   default     = "Rocky-9.4-x86_64-dvd.iso"
   description = "Filename of the Rocky Linux 9 DVD ISO in Proxmox local storage. Download from https://rockylinux.org/download."
 }
+
+# -----------------------------------------------------------------------
+# Microsoft Entra Cloud Sync (lightweight provisioning agent)
+# -----------------------------------------------------------------------
+variable "enable_cloudsync" {
+  type        = bool
+  default     = false
+  description = "Create VM 109 (lab-cloudsync01), a Windows Server 2022 member server running the Microsoft Entra Cloud Sync provisioning agent. A lighter alternative to Entra Connect Sync (VM 106) for hybrid identity. Requires internet access (pfSense/OPNsense NAT)."
+}
+
+# -----------------------------------------------------------------------
+# Two-tier PKI (offline standalone Root CA + Enterprise Issuing CA)
+# -----------------------------------------------------------------------
+variable "enable_twotier_pki" {
+  type        = bool
+  default     = false
+  description = "Create the two-tier PKI: VM 112 (lab-rootca01, offline standalone Root CA, workgroup) and VM 113 (lab-subca01, Enterprise Subordinate/Issuing CA, domain-joined). This is the realistic enterprise alternative to the single-tier Enterprise Root CA (enable_ca, VM 104). Do not enable both enable_ca and enable_twotier_pki at the same time."
+}

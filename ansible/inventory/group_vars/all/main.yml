@@ -24,6 +24,9 @@ lab_subnet:       "10.10.10.0/24"
 lab_dc_ip:        "10.10.10.10"
 lab_sccm_ip:      "10.10.10.20"
 lab_ca_ip:        "10.10.10.30"
+lab_cloudsync_ip: "10.10.10.41"
+lab_rootca_ip:    "10.10.10.31"
+lab_subca_ip:     "10.10.10.32"
 
 # NTP — the DC acts as the authoritative NTP source inside the lab
 lab_ntp_server:   "10.10.10.10"
@@ -34,6 +37,13 @@ lab_ntp_server:   "10.10.10.10"
 sccm_site_code:    "LAB"
 sccm_site_name:    "Lab Demo"
 sccm_sources_dir:  "C:\\SCCM_Sources"
+
+# -------------------------------------------------------------------
+# Two-tier PKI (enable_twotier_pki)
+# -------------------------------------------------------------------
+pki_root_ca_name:        "LAB-Offline-Root-CA"
+pki_sub_ca_name:         "LAB-Issuing-CA"
+pki_root_validity_years: 20
 
 # -------------------------------------------------------------------
 # Vault-backed secret aliases

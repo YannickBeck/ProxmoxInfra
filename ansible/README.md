@@ -79,7 +79,10 @@ ansible/
 │   ├── dc02.yml                         # Secondary DC (lab-dc02, optional)
 │   ├── sccm.yml                         # SCCM prerequisites (lab-sccm01)
 │   ├── ca.yml                           # Enterprise Root CA (lab-ca01, optional)
+│   ├── pki-root.yml                     # Offline Standalone Root CA (lab-rootca01, optional)
+│   ├── pki-sub.yml                      # Enterprise Subordinate/Issuing CA (lab-subca01, optional)
 │   ├── aadconnect.yml                   # Entra Connect (lab-aadc01, optional)
+│   ├── cloudsync.yml                    # Entra Cloud Sync (lab-cloudsync01, optional)
 │   ├── client-windows.yml               # Windows 11 clients (clients_win)
 │   └── client-linux.yml                 # Linux clients (clients_linux, optional)
 └── roles/
@@ -151,7 +154,10 @@ nano inventory/lab.yml
 | `dc02` | lab-dc02 (10.10.10.11) — optional | WinRM |
 | `sccm` | lab-sccm01 (10.10.10.20) | WinRM |
 | `ca` | lab-ca01 (10.10.10.30) — optional | WinRM |
+| `rootca` | lab-rootca01 (10.10.10.31) — optional (workgroup) | WinRM |
+| `subca` | lab-subca01 (10.10.10.32) — optional | WinRM |
 | `aadconnect` | lab-aadc01 (10.10.10.40) — optional | WinRM |
+| `cloudsync` | lab-cloudsync01 (10.10.10.41) — optional | WinRM |
 | `clients_win` | lab-client01 (10.10.10.50), lab-client02 — optional | WinRM |
 | `linux` | All Linux VMs (parent group) | SSH |
 | `clients_linux` | lab-linux01 (10.10.10.60), lab-linux02 — optional | SSH |
@@ -365,6 +371,43 @@ Configures lab-ca01 as an Enterprise Root CA for lab.local:
 4. Installs and configures AD CS (Enterprise Root CA, 4096-bit, SHA256, 10 years)
 5. Configures AD CS Web Enrollment (`/certsrv`)
 
+### pki-root.yml
+
+**Host group**: `rootca` — optional (Terraform toggle: `enable_twotier_pki = true`, VM 112)
+
+Configures lab-rootca01 as the **offline standalone Root CA** of a two-tier PKI. This host is a **workgroup** machine — it is **not** domain-joined and is reached via the local Administrator account.
+
+1. Renames to `LAB-ROOTCA01` (stays in WORKGROUP)
+2. Sets a temporary static IP `10.10.10.31` (only for the setup / cert-transfer window — an offline root normally has no network)
+3. Installs `AD-Certificate` + `RSAT-ADCS` + `RSAT-ADCS-Mgmt`
+4. Runs `setup-rootca.ps1` (`-RootCaName {{ pki_root_ca_name }}` `-ValidityYears {{ pki_root_validity_years }}`) to install a `StandaloneRootCA` and export the root cert + CRL to `C:\PKI_Export\`
+5. Fetches the exported root `.crt`/`.crl` back to the control node under `/tmp/pki_export/`
+6. Validates with `certutil -getreg CA\CommonName` / `certutil -CAInfo`
+
+**Special note**: The root CA exists only to sign the sub-CA's certificate request. After it has issued the sub-CA certificate, **power the VM off and keep it offline** — its private key never leaves the VM. Tags: `always`, `info`, `rename`, `network`, `features`, `install`, `fetch`, `validate`.
+
+### pki-sub.yml
+
+**Host group**: `subca` — optional (Terraform toggle: `enable_twotier_pki = true`, VM 113)
+
+Configures lab-subca01 as the domain-joined **Enterprise Subordinate / Issuing CA** of the two-tier PKI.
+
+1. Renames to `LAB-SUBCA01`
+2. Sets static IP `10.10.10.32`
+3. Joins the `lab.local` domain (OU=Servers)
+4. Installs `Adcs-Cert-Authority` + `Adcs-Web-Enrollment` + `RSAT-ADCS-Mgmt`
+5. Runs `setup-subca.ps1` (`-SubCaName {{ pki_sub_ca_name }}`) to install an `EnterpriseSubordinateCA`
+6. Validates with `certutil -CAInfo`
+
+**Special note — offline-root cert exchange**: Because the parent root is offline, `Install-AdcsCertificationAuthority` produces a certificate **request** (`*.req`) at `C:\` and CertSvc will not start until it is signed. The playbook prints the full manual workflow:
+1. Copy `C:\*.req` from the sub-CA to the offline root.
+2. On the root: `certreq -submit <file>.req`, then `certutil -resubmit <RequestId>`, and retrieve the issued cert.
+3. Copy the issued `.cer` + the root `.crt`/`.crl` back to the sub-CA.
+4. On the sub-CA: `certutil -installCert <issued>.cer`, then `Start-Service certsvc`.
+5. Publish the root into AD: `certutil -dspublish -f root.crt RootCA` and `certutil -dspublish -f root.crl`.
+
+Re-run with `--tags validate` once CertSvc is running. Tags: `always`, `info`, `rename`, `network`, `join`, `features`, `install`, `validate`.
+
 ### aadconnect.yml
 
 **Host group**: `aadconnect` — optional (Terraform toggle: `enable_aadconnect = true`)
@@ -383,6 +426,28 @@ Configures lab-aadc01 for hybrid Azure AD Join:
 **Phase 2 (interactive)**:
 - Complete the wizard with Custom install, Password Hash Sync, Seamless SSO, Hybrid AADJ
 - Requires a Global Administrator account with MFA
+
+### cloudsync.yml
+
+**Host group**: `cloudsync` — optional (Terraform toggle: `enable_cloudsync = true`, VM 109)
+
+Configures lab-cloudsync01 as a domain-joined member running the Microsoft **Entra Cloud Sync** provisioning agent (the lightweight, cloud-managed alternative to the full Entra Connect sync engine). Internet access is required.
+
+**Phase 1 (automated)**:
+1. Renames to `LAB-CLOUDSYNC01`
+2. Sets static IP `10.10.10.41`
+3. Installs RSAT-AD-PowerShell
+4. Domain-joins to lab.local (OU=Servers)
+5. Verifies internet connectivity to `login.microsoftonline.com:443` (fails fast with pfSense/OPNsense NAT guidance)
+6. Downloads the provisioning agent (`https://aka.ms/EntraProvisioningAgent`) to `C:\Install\AADConnectProvisioningAgentSetup.exe`
+7. Silently installs the agent (`/quiet`, guarded by service/install-path check)
+
+**Phase 2 (interactive — CLOUD-SIDE)**:
+- Cloud Sync configuration lives in the cloud, not on this server. After the agent is installed:
+  - Register the agent (it prompts for a Global Admin during install, or register unattended with the `AADCloudSyncTools` PowerShell module: `Install-Module AADCloudSyncTools`; `Connect-AADCloudSyncTools`; `Add-AADCloudSyncToolsServiceAccount`)
+  - In the Microsoft Entra admin center (Identity → Hybrid management → Microsoft Entra Connect → Cloud sync), verify the agent is healthy, create a configuration mapping the AD OU(s) to Entra, then enable and start provisioning.
+
+See `infrastructure/entra-cloudsync/README.md` for the full guide. Tags: `always`, `info`, `rename`, `network`, `features`, `join`, `configure`.
 
 ### client-windows.yml
 

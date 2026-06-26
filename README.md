@@ -60,11 +60,18 @@ Internet
 | Component | Role | IP | Toggle |
 |---|---|---|---|
 | lab-fw01 (VM 100) | pfSense CE router, NAT internet, firewall | 10.10.10.1 (LAN) | `enable_pfsense` |
-| lab-ca01 (VM 104) | AD CS Enterprise Root CA — SCCM PKI, LDAPS, auto-enroll | 10.10.10.30 | `enable_ca` |
+| lab-opnsense01 (VM 107) | OPNsense CE router — NAT, IDS/IPS (alternative to pfSense) | 10.10.10.1 (LAN) | `enable_opnsense` |
+| lab-ca01 (VM 104) | AD CS single-tier Enterprise Root CA — SCCM PKI, LDAPS | 10.10.10.30 | `enable_ca` |
+| lab-rootca01 + lab-subca01 (VM 112/113) | Two-tier PKI — offline Root CA + Enterprise Issuing CA | 10.10.10.31 / .32 | `enable_twotier_pki` |
 | lab-dc02 (VM 105) | Secondary DC — AD replication, DNS redundancy, FSMO drills | 10.10.10.11 | `enable_dc02` |
-| lab-aadc01 (VM 106) | Azure AD Connect / Entra sync — Hybrid AADJ + Intune co-mgmt | 10.10.10.40 | `enable_aadconnect` |
+| lab-aadc01 (VM 106) | Entra Connect Sync — Hybrid AADJ + Intune co-mgmt | 10.10.10.40 | `enable_aadconnect` |
+| lab-cloudsync01 (VM 109) | Entra Cloud Sync — lightweight hybrid identity agent | 10.10.10.41 | `enable_cloudsync` |
+| lab-client02 (VM 108) | Second Windows 11 client | 10.10.10.51 / DHCP | `enable_client02` |
+| lab-linux01 / lab-linux02 (VM 110/111) | Ubuntu 22.04 + Rocky Linux 9 clients | 10.10.10.60 / .61 | `enable_linux_client` |
 | WSUS disk on SCCM | Extra data disk for Software Update Point (E:\\WSUS) | – | `wsus_content_disk_size` |
 | Packer templates | Unattended Windows golden images (VMID 9000/9001) | – | Separate build step |
+
+Further extension ideas (monitoring, SIEM, backup, jump host, and more) are catalogued in [docs/suggestions.md](docs/suggestions.md).
 
 ---
 

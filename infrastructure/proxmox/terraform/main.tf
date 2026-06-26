@@ -15,10 +15,13 @@
 #   106 – lab-aadc01    : Azure AD Connect server        (optional, enable_aadconnect)
 #   107 – lab-opnsense01: OPNsense CE router/firewall    (optional, enable_opnsense; mutually exclusive with 100)
 #   108 – lab-client02  : Second Windows 11 client       (optional, enable_client02)
+#   109 – lab-cloudsync01: Entra Cloud Sync agent         (optional, enable_cloudsync)
 #   110 – lab-linux01   : Ubuntu 22.04 LTS client        (optional, enable_linux_client)
 #   111 – lab-linux02   : Rocky Linux 9 client           (optional, enable_linux_client + linux_client_count=2)
+#   112 – lab-rootca01  : Offline Root CA (workgroup)    (optional, enable_twotier_pki)
+#   113 – lab-subca01   : Enterprise Issuing/Sub CA      (optional, enable_twotier_pki)
 #
-# VMs 100/104/105/106/107/108/110/111 are opt-in extensions (see docs/extensions.md).
+# VMs 100/104/105/106/107/108/109/110/111/112/113 are opt-in extensions (see docs/extensions.md).
 # Each is guarded by a `count` based on its enable_* toggle and defaults to OFF.
 # =======================================================================
 
@@ -726,4 +729,225 @@ resource "proxmox_virtual_environment_vm" "linux02" {
   scsi_hardware = "virtio-scsi-pci"
   started       = false
   lifecycle { ignore_changes = [started] }
+}
+
+# -----------------------------------------------------------------------
+# VM 109 – lab-cloudsync01 (Microsoft Entra Cloud Sync)   [enable_cloudsync]
+# -----------------------------------------------------------------------
+# Domain-joined member server running the lightweight Microsoft Entra Cloud
+# Sync provisioning agent. A simpler, agent-based alternative to Entra
+# Connect Sync (VM 106) for synchronising lab.local into Microsoft Entra ID
+# (Azure AD). The agent is configured entirely from the Entra portal, so no
+# heavy sync engine runs locally. Requires internet access (pfSense/OPNsense
+# NAT). You can run this alongside VM 106 to compare the two approaches.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "cloudsync" {
+  count     = var.enable_cloudsync ? 1 : 0
+  vm_id     = 109
+  name      = "lab-cloudsync01"
+  node_name = var.proxmox_node
+
+  description = "Lab Entra Cloud Sync server – Windows Server 2022, Microsoft Entra Cloud Sync provisioning agent for hybrid identity (10.10.10.41)"
+
+  operating_system {
+    type = "win11"
+  }
+
+  bios = "seabios"
+
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
+
+  memory {
+    dedicated = 4096
+  }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 60
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  cdrom {
+    file_id   = local.win_server_iso
+    interface = "ide2"
+  }
+
+  cdrom {
+    file_id   = local.virtio_iso
+    interface = "ide3"
+  }
+
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
+
+  vga {
+    type = "std"
+  }
+
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+
+  started = false
+
+  lifecycle {
+    ignore_changes = [started]
+  }
+}
+
+# -----------------------------------------------------------------------
+# VM 112 – lab-rootca01 (Offline standalone Root CA)     [enable_twotier_pki]
+# -----------------------------------------------------------------------
+# Tier 1 of the two-tier PKI. A STANDALONE Root CA that is intentionally a
+# WORKGROUP machine (NOT domain-joined) and is normally kept OFFLINE/powered
+# off after it issues the subordinate CA's certificate. This mirrors a
+# realistic enterprise design where the root of trust is air-gapped to
+# protect the root private key. Created together with VM 113 by the single
+# enable_twotier_pki toggle. Configure with the two-tier PKI setup scripts.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "rootca" {
+  count     = var.enable_twotier_pki ? 1 : 0
+  vm_id     = 112
+  name      = "lab-rootca01"
+  node_name = var.proxmox_node
+
+  description = "Lab offline standalone Root CA – Windows Server 2022, workgroup, kept offline after issuing the sub-CA certificate (10.10.10.31)"
+
+  operating_system {
+    type = "win11"
+  }
+
+  bios = "seabios"
+
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
+
+  memory {
+    dedicated = 2048
+  }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 60
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  cdrom {
+    file_id   = local.win_server_iso
+    interface = "ide2"
+  }
+
+  cdrom {
+    file_id   = local.virtio_iso
+    interface = "ide3"
+  }
+
+  # Attached to the lab bridge for the initial sub-CA cert exchange only.
+  # This VM is intentionally WORKGROUP (not domain-joined) and is meant to
+  # be powered OFF (offline) once the subordinate CA certificate is issued.
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
+
+  vga {
+    type = "std"
+  }
+
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+
+  started = false
+
+  lifecycle {
+    ignore_changes = [started]
+  }
+}
+
+# -----------------------------------------------------------------------
+# VM 113 – lab-subca01 (Enterprise Subordinate / Issuing CA) [enable_twotier_pki]
+# -----------------------------------------------------------------------
+# Tier 2 of the two-tier PKI. A domain-joined ENTERPRISE Subordinate
+# (Issuing) CA whose certificate is signed by the offline Root CA (VM 112).
+# This is the CA that stays online and issues the day-to-day certificates
+# for SCCM HTTPS, LDAPS on the DCs, and client/auto-enrollment templates.
+# Created together with VM 112 by the single enable_twotier_pki toggle.
+# -----------------------------------------------------------------------
+resource "proxmox_virtual_environment_vm" "subca" {
+  count     = var.enable_twotier_pki ? 1 : 0
+  vm_id     = 113
+  name      = "lab-subca01"
+  node_name = var.proxmox_node
+
+  description = "Lab Enterprise Subordinate/Issuing CA – Windows Server 2022, domain-joined, issues certs for SCCM/LDAPS/auto-enrollment (10.10.10.32)"
+
+  operating_system {
+    type = "win11"
+  }
+
+  bios = "seabios"
+
+  cpu {
+    cores   = 2
+    sockets = 1
+    type    = "x86-64-v2-AES"
+  }
+
+  memory {
+    dedicated = 4096
+  }
+
+  disk {
+    datastore_id = var.vm_storage
+    size         = 60
+    interface    = "scsi0"
+    file_format  = "raw"
+    ssd          = true
+    discard      = "on"
+  }
+
+  cdrom {
+    file_id   = local.win_server_iso
+    interface = "ide2"
+  }
+
+  cdrom {
+    file_id   = local.virtio_iso
+    interface = "ide3"
+  }
+
+  network_device {
+    bridge  = var.lab_network_bridge
+    model   = "virtio"
+    enabled = true
+  }
+
+  vga {
+    type = "std"
+  }
+
+  boot_order    = ["ide2", "scsi0"]
+  scsi_hardware = "virtio-scsi-pci"
+
+  started = false
+
+  lifecycle {
+    ignore_changes = [started]
+  }
 }

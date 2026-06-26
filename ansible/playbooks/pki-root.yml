@@ -1,0 +1,287 @@
+---
+# =======================================================================
+# Two-Tier PKI — Offline Standalone Root CA Playbook
+# =======================================================================
+# Configures lab-rootca01 (VM 112, 10.10.10.31) as a STANDALONE OFFLINE
+# ROOT CA for a two-tier PKI. This is the root of trust that signs the
+# subordinate (issuing) CA's certificate and nothing else.
+#
+# IMPORTANT — OFFLINE / WORKGROUP NATURE:
+#   A standalone root CA is deliberately kept OFFLINE and is NOT joined to
+#   the domain — it is a WORKGROUP machine reached via the local
+#   Administrator account. It only needs to be powered on during two short
+#   windows: (1) initial install, and (2) when it signs the sub-CA's
+#   certificate request. After the sub-CA certificate has been issued, the
+#   root should be POWERED OFF and kept offline (ideally with its disk
+#   detached / stored securely). Its private key never leaves this VM.
+#
+# Prerequisites:
+#   - Windows Server 2022 is installed on lab-rootca01
+#   - WinRM is enabled on lab-rootca01 (run winrm quickconfig -y)
+#   - Terraform toggle: enable_twotier_pki = true (VMs 112 + 113)
+#   - Inventory lab.yml has the `rootca` group uncommented, connecting as
+#     the LOCAL Administrator (NOT a domain account)
+#   - infrastructure/vms/pki/powershell/setup-rootca.ps1 is present
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-root.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-root.yml --tags rename,network
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-root.yml --tags fetch
+#
+# What this playbook does:
+#   1. Renames the computer to LAB-ROOTCA01 (stays in WORKGROUP)
+#   2. Sets a temporary static IP 10.10.10.31 for the setup/transfer window
+#   3. Installs AD-Certificate + RSAT-ADCS management tools
+#   4. Runs setup-rootca.ps1 to install a StandaloneRootCA and export the
+#      root certificate + CRL to C:\PKI_Export\
+#   5. Fetches the exported root .crt/.crl back to the Ansible control node
+#   6. Validates the CA with certutil
+#
+# After this playbook the root CA is ready to SIGN the sub-CA request — see
+# pki-sub.yml for the offline-root certificate-exchange workflow. Once the
+# sub-CA certificate is issued, POWER THIS VM OFF and keep it offline.
+# =======================================================================
+
+- name: Configure Offline Standalone Root CA – lab-rootca01
+  hosts: rootca
+  gather_facts: false
+
+  vars:
+    # Relative path (from this playbook) to the root CA install script.
+    rootca_script_src:  "{{ playbook_dir }}/../../infrastructure/vms/pki/powershell/setup-rootca.ps1"
+    rootca_script_dest: "C:\\Scripts\\setup-rootca.ps1"
+    rootca_export_dir:  "C:\\PKI_Export"
+    # Local export directory on the Ansible control node for the root cert/CRL.
+    rootca_fetch_dir:   "/tmp/pki_export"
+    # admin_password → vault_admin_password (LOCAL Administrator — NOT a domain account)
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check (always runs regardless of tags)
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state (domain should be WORKGROUP)
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      changed_when: false
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    - name: Get domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: current_domain
+      changed_when: false
+      tags: [info]
+
+    - name: Show domain status (expected WORKGROUP — root CA is offline/standalone)
+      ansible.builtin.debug:
+        msg: "Current domain/workgroup: {{ current_domain.stdout | trim }} (a standalone root CA must remain WORKGROUP)"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename computer to LAB-ROOTCA01 (no domain join)
+    # -------------------------------------------------------------------
+    - name: Rename computer to LAB-ROOTCA01
+      ansible.windows.win_hostname:
+        name: LAB-ROOTCA01
+      register: rename_result
+      when: current_hostname.stdout | trim | upper != "LAB-ROOTCA01"
+      tags: [rename]
+
+    - name: Reboot after rename
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    - name: Wait for WinRM after rename reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    # -------------------------------------------------------------------
+    # Tag: network — temporary static IP (guarded, idempotent)
+    # NOTE: An offline root CA normally has NO network connection. This IP
+    # exists only for the initial setup and the cert-transfer window; after
+    # the sub-CA certificate is issued the VM should be powered off / kept
+    # offline regardless of this address.
+    # -------------------------------------------------------------------
+    - name: Configure static IP address
+      ansible.windows.win_shell: |
+        $adapter  = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        $desired  = "{{ lab_rootca_ip | default('10.10.10.31') }}"
+        $existing = Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                    Where-Object { $_.IPAddress -eq $desired }
+        if (-not $existing) {
+            Remove-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-NetRoute     -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            New-NetIPAddress -InterfaceAlias $adapter.Name `
+                -IPAddress $desired `
+                -PrefixLength 24 `
+                -DefaultGateway "{{ lab_gateway | default('10.10.10.1') }}" | Out-Null
+        }
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+            -ServerAddresses "{{ lab_dns_primary | default('10.10.10.10') }}"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: features — install AD CS (standalone) + RSAT management tools
+    # -------------------------------------------------------------------
+    - name: Install AD Certificate Services and RSAT-ADCS tools
+      ansible.windows.win_feature:
+        name:
+          - AD-Certificate
+          - RSAT-ADCS
+          - RSAT-ADCS-Mgmt
+        include_management_tools: true
+        state: present
+      register: adcs_features
+      tags: [features]
+
+    - name: Show feature installation result
+      ansible.builtin.debug:
+        msg: "AD CS features installed. Reboot required: {{ adcs_features.reboot_required | default(false) }}"
+      tags: [features]
+
+    - name: Reboot if required after feature install
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: adcs_features.reboot_required | default(false)
+      tags: [features]
+
+    - name: Wait for WinRM after feature reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: adcs_features.reboot_required | default(false)
+      tags: [features]
+
+    # -------------------------------------------------------------------
+    # Tag: install — copy and run the standalone root CA install script
+    # Guard: skip if a CA is already configured (CertSvc registry key).
+    # -------------------------------------------------------------------
+    - name: Create C:\Scripts directory
+      ansible.windows.win_file:
+        path: "C:\\Scripts"
+        state: directory
+      tags: [install]
+
+    - name: Copy setup-rootca.ps1 to LAB-ROOTCA01
+      ansible.windows.win_copy:
+        src: "{{ rootca_script_src }}"
+        dest: "{{ rootca_script_dest }}"
+      tags: [install]
+
+    - name: Check whether a Certification Authority is already configured
+      ansible.windows.win_shell: |
+        $svc = Get-Service -Name CertSvc -ErrorAction SilentlyContinue
+        $reg = "HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration"
+        if ($svc -and (Test-Path $reg) -and (Get-ChildItem $reg -ErrorAction SilentlyContinue)) {
+            Write-Output "configured"
+        } else {
+            Write-Output "absent"
+        }
+      register: ca_state
+      changed_when: false
+      tags: [install]
+
+    - name: Run setup-rootca.ps1 to install the StandaloneRootCA
+      ansible.windows.win_shell: |
+        & "{{ rootca_script_dest }}" `
+            -RootCaName     "{{ pki_root_ca_name }}" `
+            -ValidityYears  "{{ pki_root_validity_years }}"
+        exit $LASTEXITCODE
+      when: ca_state.stdout | trim == "absent"
+      register: rootca_install
+      tags: [install]
+
+    - name: Show root CA configuration result
+      ansible.builtin.debug:
+        msg: >-
+          Root CA state before run: {{ ca_state.stdout | trim }} |
+          Configured this run: {{ (ca_state.stdout | trim == 'absent') | ternary('yes', 'no (already present)') }}
+      tags: [install]
+
+    # -------------------------------------------------------------------
+    # Tag: fetch — pull the exported root .crt/.crl to the control node
+    # so they can be transferred to lab-subca01.
+    # -------------------------------------------------------------------
+    - name: Find exported root certificate / CRL files in C:\PKI_Export
+      ansible.windows.win_find:
+        paths: "{{ rootca_export_dir }}"
+        patterns: ['*.crt', '*.crl', '*.cer']
+      register: rootca_exports
+      tags: [fetch]
+
+    - name: Fetch exported root certificate / CRL to the control node
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ rootca_fetch_dir }}/"
+        flat: true
+      loop: "{{ rootca_exports.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [fetch]
+
+    - name: Note — make the root cert/CRL available to lab-subca01
+      ansible.builtin.debug:
+        msg:
+          - "Root certificate + CRL fetched to {{ rootca_fetch_dir }}/ on the Ansible control node."
+          - "Files: {{ rootca_exports.files | map(attribute='path') | list }}"
+          - "OPERATOR ACTION: transfer these files to lab-subca01 so the issuing CA"
+          - "can publish the root into AD (certutil -dspublish) after it is installed."
+          - "The pki-sub.yml playbook documents the full offline-root cert-exchange workflow."
+      tags: [fetch]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify the standalone root CA responds
+    # -------------------------------------------------------------------
+    - name: Verify the root CA with certutil -getreg / -CAInfo
+      ansible.windows.win_shell: |
+        certutil -getreg CA\CommonName
+        certutil -CAInfo
+      register: ca_validate
+      changed_when: false
+      failed_when: false
+      tags: [validate]
+
+    - name: Show root CA validation output
+      ansible.builtin.debug:
+        var: ca_validate.stdout_lines
+      tags: [validate]
+
+    # -------------------------------------------------------------------
+    # Always: reminder to keep the root offline
+    # -------------------------------------------------------------------
+    - name: Note — keep the root CA offline after issuing the sub-CA cert
+      ansible.builtin.debug:
+        msg:
+          - "Offline Standalone Root CA '{{ pki_root_ca_name }}' is installed on LAB-ROOTCA01."
+          - "It exists only to sign the subordinate (issuing) CA certificate request."
+          - "AFTER you have signed and issued the sub-CA certificate (see pki-sub.yml),"
+          - "POWER THIS VM OFF (qm stop 112) and keep it offline / disk stored securely."
+          - "See infrastructure/vms/pki/README.md for the full guide."
+      tags: [always]

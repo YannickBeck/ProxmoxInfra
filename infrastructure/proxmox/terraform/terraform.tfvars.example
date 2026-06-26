@@ -146,3 +146,19 @@ enable_linux_client = false
 linux_client_count  = 1
 ubuntu_iso          = "ubuntu-22.04.4-live-server-amd64.iso"
 rocky_iso           = "Rocky-9.4-x86_64-dvd.iso"
+
+# -----------------------------------------------------------------------
+# Microsoft Entra Cloud Sync (VM 109) — lightweight hybrid identity agent
+# -----------------------------------------------------------------------
+# Alternative to Entra Connect Sync (enable_aadconnect, VM 106). Cloud Sync
+# uses a lightweight provisioning agent configured from the Entra portal.
+# Requires internet access. You may run both VM 106 and VM 109 to compare.
+enable_cloudsync = false
+
+# -----------------------------------------------------------------------
+# Two-tier PKI (VMs 112 + 113) — offline Root CA + Enterprise Issuing CA
+# -----------------------------------------------------------------------
+# The realistic enterprise PKI design. VM 112 is an offline standalone Root
+# CA (workgroup); VM 113 is the domain-joined Enterprise Issuing CA.
+# Do NOT enable both enable_ca (single-tier, VM 104) and enable_twotier_pki.
+enable_twotier_pki = false

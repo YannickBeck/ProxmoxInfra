@@ -45,9 +45,16 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | VMID | Toggle | Hostname | IP | Role |
 |---|---|---|---|---|---|
 | pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall |
-| Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI, SCCM certs, LDAPS |
+| Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI (single-tier), SCCM certs, LDAPS |
 | Secondary DC | 105 | `enable_dc02` | lab-dc02 | 10.10.10.11 | AD replication, DNS redundancy |
-| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra sync, Hybrid AADJ, co-mgmt |
+| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra Connect Sync, Hybrid AADJ, co-mgmt |
+| OPNsense router | 107 | `enable_opnsense` | lab-opnsense01 | 10.10.10.1 (LAN) | NAT, IDS/IPS — alternative to pfSense |
+| Windows 11 client 2 | 108 | `enable_client02` | lab-client02 | 10.10.10.51 / DHCP | Second managed endpoint |
+| Entra Cloud Sync | 109 | `enable_cloudsync` | lab-cloudsync01 | 10.10.10.41 | Lightweight hybrid identity agent |
+| Ubuntu client | 110 | `enable_linux_client` | lab-linux01 | 10.10.10.60 / DHCP | Linux client, SSSD AD join |
+| Rocky Linux client | 111 | `enable_linux_client` (count=2) | lab-linux02 | 10.10.10.61 / DHCP | RHEL-compatible Linux client |
+| Offline Root CA | 112 | `enable_twotier_pki` | lab-rootca01 | 10.10.10.31 | Standalone Root CA (workgroup, offline) |
+| Enterprise Issuing CA | 113 | `enable_twotier_pki` | lab-subca01 | 10.10.10.32 | Subordinate/Issuing CA (domain) |
 
 ### VM Specifications
 
@@ -64,9 +71,16 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | vCPU | RAM | Disk | Notes |
 |---|---|---|---|---|
 | lab-fw01 | 2 | 2 GB | 16 GB | Dual-NIC: vmbr0 (WAN) + vmbr1 (LAN) |
-| lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA, domain-joined |
+| lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA (single-tier), domain-joined |
 | lab-dc02 | 2 | 4 GB | 60 GB | Replica DC, same specs as DC01 |
-| lab-aadc01 | 2 | 4 GB | 60 GB | Member server, needs internet (pfSense) |
+| lab-aadc01 | 2 | 4 GB | 60 GB | Entra Connect Sync, member server, needs internet |
+| lab-opnsense01 | 2 | 2 GB | 16 GB | Dual-NIC OPNsense; alternative to lab-fw01 |
+| lab-client02 | 2 | 4 GB | 60 GB | Second Win11 client, TPM 2.0 emulated |
+| lab-cloudsync01 | 2 | 4 GB | 60 GB | Entra Cloud Sync agent, needs internet |
+| lab-linux01 | 2 | 2 GB | 40 GB | Ubuntu 22.04, SSH-managed |
+| lab-linux02 | 2 | 2 GB | 40 GB | Rocky Linux 9, SSH-managed |
+| lab-rootca01 | 2 | 2 GB | 60 GB | Offline standalone Root CA, workgroup |
+| lab-subca01 | 2 | 4 GB | 60 GB | Enterprise Issuing CA, domain-joined |
 
 ---
 
@@ -145,22 +159,25 @@ lab-dc01 (must be fully booted and AD domain ready)
 When powering on the lab from scratch:
 
 1. **Wake Proxmox host** (via WOL from Raspberry Pi or power button)
-2. **Start lab-fw01** (VM 100, if deployed): `qm start 100` — wait for pfSense to be ready before continuing
+2. **Start the router** (VM 100 pfSense *or* VM 107 OPNsense, if deployed): `qm start 100` / `qm start 107` — wait for it to be ready before continuing
 3. **Start lab-dc01** (VM 101): `qm start 101` — wait ~3–5 min for AD services
 4. **Start lab-dc02** (VM 105, if deployed): `qm start 105`
-5. **Start lab-ca01** (VM 104, if deployed): `qm start 104`
+5. **Start the CA tier** (if deployed): single-tier `qm start 104`, or two-tier issuing CA `qm start 113` (the offline root, VM 112, stays powered off)
 6. **Start lab-sccm01** (VM 102): `qm start 102` — wait ~5–10 min for SQL + SCCM services
-7. **Start lab-aadc01** (VM 106, if deployed): `qm start 106`
-8. **Start lab-client01** (VM 103): `qm start 103`
+7. **Start identity sync** (VM 106 Entra Connect and/or VM 109 Cloud Sync, if deployed): `qm start 106` / `qm start 109`
+8. **Start clients** (VM 103, plus VM 108 / 110 / 111 if deployed): `qm start 103`
+
+The offline Root CA (VM 112) is intentionally **not** part of normal startup — power it on only when you need to issue or renew the issuing CA certificate or publish a new CRL.
 
 Shutdown order (reverse):
 ```bash
-qm shutdown 103   # client first
-qm shutdown 106   # Azure AD Connect
+qm shutdown 103   # clients first (also 108/110/111)
+qm shutdown 109   # Entra Cloud Sync
+qm shutdown 106   # Entra Connect Sync
 qm shutdown 102   # SCCM + SQL
-qm shutdown 104   # CA
+qm shutdown 113   # Issuing CA   (or 104 for single-tier)
 qm shutdown 105   # DC02
 qm shutdown 101   # Primary DC last
-qm shutdown 100   # pfSense
+qm shutdown 107   # OPNsense    (or 100 for pfSense)
 shutdown -h now   # Proxmox host
 ```

@@ -346,12 +346,19 @@ After the base lab is running, you can enable additional VMs by setting toggles 
 | Toggle | VM | IP | Purpose |
 |---|---|---|---|
 | `enable_pfsense = true` | lab-fw01 (100) | 10.10.10.1 | NAT internet for lab VMs. Deploy first. |
-| `enable_ca = true` | lab-ca01 (104) | 10.10.10.30 | Internal PKI (SCCM certs, LDAPS) |
+| `enable_opnsense = true` | lab-opnsense01 (107) | 10.10.10.1 | OPNsense router — alternative to pfSense (mutually exclusive). |
+| `enable_ca = true` | lab-ca01 (104) | 10.10.10.30 | Single-tier Enterprise Root CA (SCCM certs, LDAPS). |
+| `enable_twotier_pki = true` | lab-rootca01 (112) + lab-subca01 (113) | 10.10.10.31 / .32 | Two-tier PKI: offline Root CA + Enterprise Issuing CA. Alternative to `enable_ca`. |
 | `enable_dc02 = true` | lab-dc02 (105) | 10.10.10.11 | Secondary DC, AD replication practice |
-| `enable_aadconnect = true` | lab-aadc01 (106) | 10.10.10.40 | Hybrid Azure AD Join + Intune co-mgmt |
+| `enable_aadconnect = true` | lab-aadc01 (106) | 10.10.10.40 | Entra Connect Sync — Hybrid Azure AD Join + Intune co-mgmt |
+| `enable_cloudsync = true` | lab-cloudsync01 (109) | 10.10.10.41 | Entra Cloud Sync — lightweight hybrid identity agent |
+| `enable_client02 = true` | lab-client02 (108) | 10.10.10.51 | Second Windows 11 client |
+| `enable_linux_client = true` | lab-linux01 (110) [+ lab-linux02 (111)] | 10.10.10.60 / .61 | Ubuntu 22.04 [+ Rocky Linux 9] clients |
 | `wsus_content_disk_size = 150` | lab-sccm01 extra disk | – | WSUS / Software Update Point content |
 
-**When enabling pfSense:** Remove `address 10.10.10.1/24` from the Proxmox host's vmbr1 in `/etc/network/interfaces` (change to `iface vmbr1 inet manual`) and run `ifreload -a`. pfSense becomes the 10.10.10.1 gateway.
+**Mutually exclusive choices:** Enable **either** pfSense **or** OPNsense (both claim 10.10.10.1), and **either** `enable_ca` **or** `enable_twotier_pki` (don't run two roots in one domain). Entra Connect Sync and Cloud Sync may both be deployed to compare, but should not sync the same objects.
+
+**When enabling pfSense or OPNsense:** Remove `address 10.10.10.1/24` from the Proxmox host's vmbr1 in `/etc/network/interfaces` (change to `iface vmbr1 inet manual`) and run `ifreload -a`. The router VM becomes the 10.10.10.1 gateway.
 
 After `terraform apply` for an extension VM:
 1. Boot the VM from its ISO (or from Packer template if available)

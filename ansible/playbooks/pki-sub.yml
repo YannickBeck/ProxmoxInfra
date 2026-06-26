@@ -1,0 +1,325 @@
+---
+# =======================================================================
+# Two-Tier PKI — Enterprise Subordinate (Issuing) CA Playbook
+# =======================================================================
+# Configures lab-subca01 (VM 113, 10.10.10.32) as an ENTERPRISE
+# SUBORDINATE / ISSUING CA for lab.local in a two-tier PKI. This is the
+# online CA that domain members enrol against; its own CA certificate is
+# signed by the OFFLINE STANDALONE ROOT CA (lab-rootca01, see pki-root.yml).
+#
+# IMPORTANT — OFFLINE-ROOT SIGNING WORKFLOW:
+#   Because the parent root CA is OFFLINE (a workgroup machine that is not
+#   reachable on the network), Install-AdcsCertificationAuthority cannot
+#   submit the request automatically. Instead it produces a certificate
+#   REQUEST file (*.req) at C:\ which MUST be carried to the offline root,
+#   signed there, and the issued certificate carried back and installed on
+#   this server before the CertSvc service will start. This manual
+#   certificate-exchange is delivered via the debug messages in the
+#   `install` tag below and summarised in the project README / PKI guide.
+#
+# Prerequisites:
+#   - lab-dc01 is running and the lab.local domain is operational
+#   - lab-rootca01 has been installed (pki-root.yml) and is available to
+#     SIGN the sub-CA request (powered on for the signing window)
+#   - The root .crt/.crl have been fetched to the control node by pki-root.yml
+#   - Windows Server 2022 is installed on lab-subca01
+#   - WinRM is enabled on lab-subca01 (run winrm quickconfig -y)
+#   - Terraform toggle: enable_twotier_pki = true (VMs 112 + 113)
+#   - Inventory lab.yml has the `subca` group uncommented with lab-subca01
+#   - infrastructure/vms/pki/powershell/setup-subca.ps1 is present
+#
+# Usage:
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-sub.yml
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-sub.yml --tags rename,network
+#   ansible-playbook -i inventory/lab.yml playbooks/pki-sub.yml --tags validate
+#
+# What this playbook does:
+#   1. Renames the computer to LAB-SUBCA01
+#   2. Sets static IP 10.10.10.32, gateway 10.10.10.1, DNS 10.10.10.10
+#   3. Joins the lab.local domain (OU=Servers)
+#   4. Installs Adcs-Cert-Authority, Adcs-Web-Enrollment and RSAT-ADCS-Mgmt
+#   5. Runs setup-subca.ps1 to install an EnterpriseSubordinateCA, which
+#      produces a *.req at C:\ to be signed by the offline root
+#   6. Prints the manual offline-root certificate-exchange workflow
+#   7. Validates the CA with certutil
+# =======================================================================
+
+- name: Configure Enterprise Subordinate CA – lab-subca01
+  hosts: subca
+  gather_facts: false
+
+  vars:
+    # Relative path (from this playbook) to the subordinate CA install script.
+    subca_script_src:  "{{ playbook_dir }}/../../infrastructure/vms/pki/powershell/setup-subca.ps1"
+    subca_script_dest: "C:\\Scripts\\setup-subca.ps1"
+    # Domain join credentials — resolved from vault via group_vars/all/main.yml
+    # domain_join_user     → vault_domain_join_user     (default: LAB\Administrator)
+    # domain_join_password → vault_domain_join_password
+    # admin_password       → vault_admin_password
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # Connectivity check (always runs regardless of tags)
+    # -------------------------------------------------------------------
+    - name: Wait for WinRM to be available
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        sleep: 5
+      tags: [always]
+
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      tags: [always]
+
+    # -------------------------------------------------------------------
+    # Tag: info — display current state
+    # -------------------------------------------------------------------
+    - name: Get current hostname
+      ansible.windows.win_shell: $env:COMPUTERNAME
+      register: current_hostname
+      changed_when: false
+      tags: [info]
+
+    - name: Show current hostname
+      ansible.builtin.debug:
+        msg: "Current hostname: {{ current_hostname.stdout | trim }}"
+      tags: [info]
+
+    - name: Get domain membership
+      ansible.windows.win_shell: (Get-WmiObject Win32_ComputerSystem).Domain
+      register: current_domain
+      changed_when: false
+      tags: [info]
+
+    - name: Show domain status
+      ansible.builtin.debug:
+        msg: "Current domain/workgroup: {{ current_domain.stdout | trim }}"
+      tags: [info]
+
+    # -------------------------------------------------------------------
+    # Tag: rename — rename computer to LAB-SUBCA01
+    # -------------------------------------------------------------------
+    - name: Rename computer to LAB-SUBCA01
+      ansible.windows.win_hostname:
+        name: LAB-SUBCA01
+      register: rename_result
+      when: current_hostname.stdout | trim | upper != "LAB-SUBCA01"
+      tags: [rename]
+
+    - name: Reboot after rename
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    - name: Wait for WinRM after rename reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: rename_result.reboot_required | default(false)
+      tags: [rename]
+
+    # -------------------------------------------------------------------
+    # Tag: network — static IP 10.10.10.32 (guarded, idempotent)
+    # -------------------------------------------------------------------
+    - name: Configure static IP address
+      ansible.windows.win_shell: |
+        $adapter  = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        $desired  = "{{ lab_subca_ip | default('10.10.10.32') }}"
+        $existing = Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                    Where-Object { $_.IPAddress -eq $desired }
+        if (-not $existing) {
+            Remove-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-NetRoute     -InterfaceAlias $adapter.Name -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+            New-NetIPAddress -InterfaceAlias $adapter.Name `
+                -IPAddress $desired `
+                -PrefixLength 24 `
+                -DefaultGateway "{{ lab_gateway | default('10.10.10.1') }}" | Out-Null
+        }
+        Set-DnsClientServerAddress -InterfaceAlias $adapter.Name `
+            -ServerAddresses "{{ lab_dns_primary | default('10.10.10.10') }}"
+      tags: [network]
+
+    # -------------------------------------------------------------------
+    # Tag: join — join the lab.local domain (placed in OU=Servers)
+    # -------------------------------------------------------------------
+    - name: Test DC connectivity before domain join
+      ansible.windows.win_shell: |
+        Test-Connection -ComputerName "{{ lab_dns_primary | default('10.10.10.10') }}" -Count 2 -Quiet
+      register: dc_ping
+      changed_when: false
+      tags: [join]
+
+    - name: Fail if DC is not reachable
+      ansible.builtin.fail:
+        msg: >-
+          Cannot reach Domain Controller at {{ lab_dns_primary | default('10.10.10.10') }}.
+          Ensure lab-dc01 is running before domain-joining lab-subca01.
+      when: dc_ping.stdout | trim | lower == "false"
+      tags: [join]
+
+    - name: Join domain lab.local (OU=Servers)
+      ansible.windows.win_domain_membership:
+        dns_domain_name: "{{ lab_domain | default('lab.local') }}"
+        domain_admin_user: "{{ domain_join_user }}"
+        domain_admin_password: "{{ domain_join_password }}"
+        domain_ou_path: "OU=Servers,DC=lab,DC=local"
+        state: domain
+      register: domain_join_result
+      tags: [join]
+
+    - name: Reboot after domain join
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: domain_join_result.reboot_required | default(false)
+      tags: [join]
+
+    - name: Wait for WinRM after domain-join reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: domain_join_result.reboot_required | default(false)
+      tags: [join]
+
+    # -------------------------------------------------------------------
+    # Tag: features — install AD CS Subordinate CA + Web Enrollment + RSAT
+    # -------------------------------------------------------------------
+    - name: Install AD CS Certification Authority, Web Enrollment and RSAT
+      ansible.windows.win_feature:
+        name:
+          - Adcs-Cert-Authority
+          - Adcs-Web-Enrollment
+          - RSAT-ADCS-Mgmt
+        include_management_tools: true
+        state: present
+      register: adcs_features
+      tags: [features]
+
+    - name: Show feature installation result
+      ansible.builtin.debug:
+        msg: "AD CS features installed. Reboot required: {{ adcs_features.reboot_required | default(false) }}"
+      tags: [features]
+
+    - name: Reboot if required after feature install
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: adcs_features.reboot_required | default(false)
+      tags: [features]
+
+    - name: Wait for WinRM after feature reboot
+      ansible.builtin.wait_for_connection:
+        delay: 30
+        timeout: 300
+        sleep: 10
+      when: adcs_features.reboot_required | default(false)
+      tags: [features]
+
+    # -------------------------------------------------------------------
+    # Tag: install — copy and run the subordinate CA install script
+    # Guard: skip if a CA is already configured (CertSvc registry key).
+    # -------------------------------------------------------------------
+    - name: Create C:\Scripts directory
+      ansible.windows.win_file:
+        path: "C:\\Scripts"
+        state: directory
+      tags: [install]
+
+    - name: Copy setup-subca.ps1 to LAB-SUBCA01
+      ansible.windows.win_copy:
+        src: "{{ subca_script_src }}"
+        dest: "{{ subca_script_dest }}"
+      tags: [install]
+
+    - name: Check whether a Certification Authority is already configured
+      ansible.windows.win_shell: |
+        $svc = Get-Service -Name CertSvc -ErrorAction SilentlyContinue
+        $reg = "HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration"
+        if ($svc -and (Test-Path $reg) -and (Get-ChildItem $reg -ErrorAction SilentlyContinue)) {
+            Write-Output "configured"
+        } else {
+            Write-Output "absent"
+        }
+      register: ca_state
+      changed_when: false
+      tags: [install]
+
+    - name: Run setup-subca.ps1 to install the EnterpriseSubordinateCA
+      ansible.windows.win_shell: |
+        & "{{ subca_script_dest }}" `
+            -SubCaName "{{ pki_sub_ca_name }}"
+        exit $LASTEXITCODE
+      when: ca_state.stdout | trim == "absent"
+      register: subca_install
+      tags: [install]
+
+    - name: Show sub CA configuration result
+      ansible.builtin.debug:
+        msg: >-
+          Sub CA state before run: {{ ca_state.stdout | trim }} |
+          Configured this run: {{ (ca_state.stdout | trim == 'absent') | ternary('yes', 'no (already present)') }}
+      tags: [install]
+
+    # -------------------------------------------------------------------
+    # Tag: install — manual offline-root certificate-exchange workflow
+    # The sub-CA request (*.req) at C:\ must be signed by the offline root.
+    # -------------------------------------------------------------------
+    - name: Show offline-root certificate-exchange next steps
+      ansible.builtin.debug:
+        msg:
+          - "========================================================="
+          - "ENTERPRISE SUBORDINATE CA — OFFLINE-ROOT CERT EXCHANGE"
+          - "========================================================="
+          - "Install-AdcsCertificationAuthority produced a certificate REQUEST"
+          - "(*.req) at C:\\ on LAB-SUBCA01. The CertSvc service will NOT start"
+          - "until this request is signed by the offline root and the issued"
+          - "certificate is installed back on this server. Complete the exchange:"
+          - ""
+          - "STEP 1 — CARRY THE REQUEST TO THE OFFLINE ROOT:"
+          - "  Copy C:\\*.req from LAB-SUBCA01 to the offline root (LAB-ROOTCA01)."
+          - ""
+          - "STEP 2 — SIGN ON THE ROOT (LAB-ROOTCA01):"
+          - "  certreq -submit <file>.req"
+          - "  (note the RequestId returned), then issue and retrieve the cert:"
+          - "  certutil -resubmit <RequestId>"
+          - "  certreq -retrieve <RequestId> C:\\subca-issued.cer"
+          - ""
+          - "STEP 3 — CARRY THE ISSUED CERT + ROOT CRT/CRL BACK:"
+          - "  Copy the issued .cer plus the root .crt/.crl (fetched by"
+          - "  pki-root.yml to /tmp/pki_export/ on the control node) to LAB-SUBCA01."
+          - ""
+          - "STEP 4 — INSTALL THE ISSUED CERT AND START CERTSVC (LAB-SUBCA01):"
+          - "  certutil -installCert <issued>.cer"
+          - "  Start-Service certsvc"
+          - ""
+          - "STEP 5 — PUBLISH THE ROOT INTO AD (LAB-SUBCA01, domain admin):"
+          - "  certutil -dspublish -f root.crt RootCA"
+          - "  certutil -dspublish -f root.crl"
+          - "  (this places the offline root into the AD Trusted Root / CDP so"
+          - "  domain members trust the chain via GPO autoenrollment)"
+          - ""
+          - "After CertSvc is running, re-run this playbook --tags validate to"
+          - "confirm the issuing CA responds. See infrastructure/vms/pki/README.md."
+          - "========================================================="
+      tags: [install, info]
+
+    # -------------------------------------------------------------------
+    # Tag: validate — verify the issuing CA responds
+    # -------------------------------------------------------------------
+    - name: Verify the sub CA with certutil -CAInfo
+      ansible.windows.win_shell: |
+        certutil -CAInfo
+      register: ca_validate
+      changed_when: false
+      failed_when: false
+      tags: [validate]
+
+    - name: Show sub CA validation output
+      ansible.builtin.debug:
+        var: ca_validate.stdout_lines
+      tags: [validate]
