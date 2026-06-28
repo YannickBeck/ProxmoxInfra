@@ -87,6 +87,31 @@ all:
             #   ansible_password: "{{ admin_password }}"
 
         # -------------------------------------------------------------------
+        # Two-tier PKI: Offline Standalone Root CA (optional)
+        # Terraform toggle: enable_twotier_pki = true (VM 112)
+        # NOTE: workgroup machine — connect as the LOCAL Administrator
+        # (NOT a domain account). Uncomment to use.
+        # -------------------------------------------------------------------
+        rootca:
+          hosts:
+            # lab-rootca01:
+            #   ansible_host: 10.10.10.31
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
+
+        # -------------------------------------------------------------------
+        # Two-tier PKI: Enterprise Subordinate / Issuing CA (optional)
+        # Terraform toggle: enable_twotier_pki = true (VM 113)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        subca:
+          hosts:
+            # lab-subca01:
+            #   ansible_host: 10.10.10.32
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
+
+        # -------------------------------------------------------------------
         # Azure AD Connect / Hybrid Azure AD Join (optional)
         # Terraform toggle: enable_aadconnect = true (VM 106)
         # Uncomment to use.
@@ -95,6 +120,18 @@ all:
           hosts:
             # lab-aadc01:
             #   ansible_host: 10.10.10.40
+            #   ansible_user: Administrator
+            #   ansible_password: "{{ admin_password }}"
+
+        # -------------------------------------------------------------------
+        # Microsoft Entra Cloud Sync (optional)
+        # Terraform toggle: enable_cloudsync = true (VM 109)
+        # Uncomment to use.
+        # -------------------------------------------------------------------
+        cloudsync:
+          hosts:
+            # lab-cloudsync01:
+            #   ansible_host: 10.10.10.41
             #   ansible_user: Administrator
             #   ansible_password: "{{ admin_password }}"
 

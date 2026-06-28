@@ -45,12 +45,19 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | VMID | Toggle | Hostname | IP | Role |
 |---|---|---|---|---|---|
 | pfSense router | 100 | `enable_pfsense` | lab-fw01 | 10.10.10.1 (LAN) | NAT internet, firewall |
+| Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI (single-tier), SCCM certs, LDAPS |
 | OPNsense router (recommended) | 107 | `enable_opnsense` | lab-opnsense01 | 10.10.10.1 (LAN) | NAT, firewall, VLANs, optional IDS/IPS; exclusive with pfSense |
 | TrueNAS storage | 120 | `enable_nas` | lab-nas01 | 10.10.10.70 | ZFS, SMB/NFS and backup target |
 | Docusaurus docs | 127 | `enable_docusaurus` | lab-docusaurus01 | 10.10.10.74 | Dedicated documentation VM in pool-nas-storage |
-| Enterprise Root CA | 104 | `enable_ca` | lab-ca01 | 10.10.10.30 | AD CS PKI, SCCM certs, LDAPS |
 | Secondary DC | 105 | `enable_dc02` | lab-dc02 | 10.10.10.11 | AD replication, DNS redundancy |
-| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra sync, Hybrid AADJ, co-mgmt |
+| Azure AD Connect | 106 | `enable_aadconnect` | lab-aadc01 | 10.10.10.40 | Entra Connect Sync, Hybrid AADJ, co-mgmt |
+| OPNsense router | 107 | `enable_opnsense` | lab-opnsense01 | 10.10.10.1 (LAN) | NAT, IDS/IPS — alternative to pfSense |
+| Windows 11 client 2 | 108 | `enable_client02` | lab-client02 | 10.10.10.51 / DHCP | Second managed endpoint |
+| Entra Cloud Sync | 109 | `enable_cloudsync` | lab-cloudsync01 | 10.10.10.41 | Lightweight hybrid identity agent |
+| Ubuntu client | 110 | `enable_linux_client` | lab-linux01 | 10.10.10.60 / DHCP | Linux client, SSSD AD join |
+| Rocky Linux client | 111 | `enable_linux_client` (count=2) | lab-linux02 | 10.10.10.61 / DHCP | RHEL-compatible Linux client |
+| Offline Root CA | 112 | `enable_twotier_pki` | lab-rootca01 | 10.10.10.31 | Standalone Root CA (workgroup, offline) |
+| Enterprise Issuing CA | 113 | `enable_twotier_pki` | lab-subca01 | 10.10.10.32 | Subordinate/Issuing CA (domain) |
 
 ### VM Specifications
 
@@ -67,12 +74,39 @@ All lab VMs run on the Proxmox host and communicate via the internal bridge `vmb
 | VM | vCPU | RAM | Disk | Notes |
 |---|---|---|---|---|
 | lab-fw01 | 2 | 2 GB | 16 GB | Dual-NIC: vmbr0 (WAN) + vmbr1 (LAN) |
+| lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA (single-tier), domain-joined |
 | lab-opnsense01 | 2 | 2 GB | 20 GB | Recommended dual-NIC firewall; alternative to pfSense |
 | lab-nas01 | 4 | 8 GB | 32 GB OS + configurable data disk | TrueNAS Scale and ZFS |
 | lab-docusaurus01 | 2 | 4 GB | 40 GB | Ubuntu with Docker Compose |
-| lab-ca01 | 2 | 4 GB | 60 GB | Enterprise Root CA, domain-joined |
 | lab-dc02 | 2 | 4 GB | 60 GB | Replica DC, same specs as DC01 |
-| lab-aadc01 | 2 | 4 GB | 60 GB | Member server, needs internet (pfSense) |
+| lab-aadc01 | 2 | 4 GB | 60 GB | Entra Connect Sync, member server, needs internet |
+| lab-opnsense01 | 2 | 2 GB | 16 GB | Dual-NIC OPNsense; alternative to lab-fw01 |
+| lab-client02 | 2 | 4 GB | 60 GB | Second Win11 client, TPM 2.0 emulated |
+| lab-cloudsync01 | 2 | 4 GB | 60 GB | Entra Cloud Sync agent, needs internet |
+| lab-linux01 | 2 | 2 GB | 40 GB | Ubuntu 22.04, SSH-managed |
+| lab-linux02 | 2 | 2 GB | 40 GB | Rocky Linux 9, SSH-managed |
+| lab-rootca01 | 2 | 2 GB | 60 GB | Offline standalone Root CA, workgroup |
+| lab-subca01 | 2 | 4 GB | 60 GB | Enterprise Issuing CA, domain-joined |
+
+---
+
+## Alternative Hypervisor – Nutanix AHV
+
+The VM configuration, IP addressing, Ansible playbooks, and PowerShell scripts in this repo are **hypervisor-agnostic**. A parallel Terraform module for **Nutanix AHV** lives at `infrastructure/nutanix/terraform/` and creates the same 14 VMs using the `nutanix/nutanix` provider.
+
+Key differences when using Nutanix:
+
+| Concept | Proxmox | Nutanix AHV |
+|---|---|---|
+| Network isolation | Linux bridge `vmbr1` (no uplink) | VLAN-backed subnet in Prism |
+| Driver ISO | VirtIO drivers ISO required | Not needed (AHV includes VirtIO) |
+| ISO storage | Proxmox local storage | Nutanix image service |
+| VM identification | Integer VMID | UUID |
+| Remote power | Raspberry Pi WOL | Prism API `power_on` |
+
+After provisioning on Nutanix, use the same Ansible inventory (`ansible/inventory/lab.yml`) with the same IP addresses — only the hypervisor-facing management changes.
+
+See `infrastructure/nutanix/README.md` for the full Nutanix setup guide.
 
 ---
 
@@ -151,26 +185,29 @@ lab-dc01 (must be fully booted and AD domain ready)
 When powering on the lab from scratch:
 
 1. **Wake Proxmox host** (via WOL from Raspberry Pi or power button)
-2. **Start the selected firewall** (VM 107 OPNsense or VM 100 pfSense, if deployed) and wait for it to be ready
+2. **Start the router** (VM 100 pfSense *or* VM 107 OPNsense, if deployed): `qm start 100` / `qm start 107` — wait for it to be ready before continuing
 3. **Start lab-nas01** (VM 120, if deployed): `qm start 120`
 4. **Start lab-dc01** (VM 101): `qm start 101` — wait ~3–5 min for AD services
 5. **Start lab-dc02** (VM 105, if deployed): `qm start 105`
-6. **Start lab-ca01** (VM 104, if deployed): `qm start 104`
+6. **Start the CA tier** (if deployed): single-tier `qm start 104`, or two-tier issuing CA `qm start 113` (the offline root, VM 112, stays powered off)
 7. **Start lab-sccm01** (VM 102): `qm start 102` — wait ~5–10 min for SQL + SCCM services
-8. **Start lab-aadc01** (VM 106, if deployed): `qm start 106`
-9. **Start lab-client01** (VM 103): `qm start 103`
+8. **Start identity sync** (VM 106 Entra Connect and/or VM 109 Cloud Sync, if deployed): `qm start 106` / `qm start 109`
+9. **Start clients** (VM 103, plus VM 108 / 110 / 111 if deployed): `qm start 103`
 10. **Start lab-docusaurus01** (VM 127, if deployed): `qm start 127`
+
+The offline Root CA (VM 112) is intentionally **not** part of normal startup — power it on only when you need to issue or renew the issuing CA certificate or publish a new CRL.
 
 Shutdown order (reverse):
 ```bash
-qm shutdown 103   # client first
+qm shutdown 103   # clients first (also 108/110/111)
 qm shutdown 127   # documentation VM
-qm shutdown 106   # Azure AD Connect
+qm shutdown 109   # Entra Cloud Sync
+qm shutdown 106   # Entra Connect Sync
 qm shutdown 102   # SCCM + SQL
-qm shutdown 104   # CA
+qm shutdown 113   # Issuing CA   (or 104 for single-tier)
 qm shutdown 105   # DC02
 qm shutdown 101   # Primary DC last
 qm shutdown 120   # NAS after its consumers
-qm shutdown 107   # OPNsense (use VM 100 instead when pfSense is selected)
+qm shutdown 107   # OPNsense    (or 100 for pfSense)
 shutdown -h now   # Proxmox host
 ```

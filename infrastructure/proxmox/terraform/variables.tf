@@ -211,13 +211,30 @@ variable "rocky_iso" {
 }
 
 # -----------------------------------------------------------------------
-# New NAS / documentation infrastructure
+# Microsoft Entra Cloud Sync (lightweight provisioning agent)
 # -----------------------------------------------------------------------
+variable "enable_cloudsync" {
+  type        = bool
+  default     = false
+  description = "Create VM 109 (lab-cloudsync01), a Windows Server 2022 member server running the Microsoft Entra Cloud Sync provisioning agent. A lighter alternative to Entra Connect Sync (VM 106) for hybrid identity. Requires internet access (pfSense/OPNsense NAT)."
+}
 
+# -----------------------------------------------------------------------
+# Two-tier PKI (offline standalone Root CA + Enterprise Issuing CA)
+# -----------------------------------------------------------------------
+variable "enable_twotier_pki" {
+  type        = bool
+  default     = false
+  description = "Create the two-tier PKI: VM 112 (lab-rootca01, offline standalone Root CA, workgroup) and VM 113 (lab-subca01, Enterprise Subordinate/Issuing CA, domain-joined). This is the realistic enterprise alternative to the single-tier Enterprise Root CA (enable_ca, VM 104). Do not enable both enable_ca and enable_twotier_pki at the same time."
+}
+
+# -----------------------------------------------------------------------
+# NAS / Documentation infrastructure
+# -----------------------------------------------------------------------
 variable "enable_nas" {
   type        = bool
   default     = false
-  description = "Create VM 120 (lab-nas01), the TrueNAS SCALE storage VM in pool-nas-storage."
+  description = "Create VM 120 (lab-nas01), TrueNAS SCALE storage VM with ZFS, SMB/NFS/iSCSI."
 }
 
 variable "truenas_iso" {
@@ -240,51 +257,5 @@ variable "nas_data_disk_size" {
 variable "enable_docusaurus" {
   type        = bool
   default     = false
-  description = "Create VM 127 (lab-docusaurus01), the dedicated Docusaurus host in pool-nas-storage."
-}
-
-# -----------------------------------------------------------------------
-# Logical project toggles (reserved for future consolidated stacks)
-# -----------------------------------------------------------------------
-
-variable "enable_ai_mcp_stack" {
-  type        = bool
-  default     = false
-  description = "Enable the future consolidated AI/MCP stack."
-}
-
-variable "enable_observability_stack" {
-  type        = bool
-  default     = false
-  description = "Enable the future Beszel and Uptime Kuma monitoring stack."
-}
-
-variable "enable_wazuh_siem" {
-  type        = bool
-  default     = false
-  description = "Enable the future optional Wazuh single-node SIEM stack."
-}
-
-variable "enable_backup_dr" {
-  type        = bool
-  default     = false
-  description = "Enable future backup and disaster-recovery project components."
-}
-
-variable "enable_proxmox_backup_server" {
-  type        = bool
-  default     = false
-  description = "Enable the future Proxmox Backup Server VM."
-}
-
-variable "enable_devops_automation" {
-  type        = bool
-  default     = false
-  description = "Enable the future consolidated automation host."
-}
-
-variable "enable_dns_filter" {
-  type        = bool
-  default     = false
-  description = "Enable the future AdGuard Home DNS-filter host."
+  description = "Create VM 127 (lab-docusaurus01), dedicated Docusaurus documentation VM."
 }

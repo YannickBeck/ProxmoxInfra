@@ -148,19 +148,29 @@ ubuntu_iso          = "ubuntu-22.04.4-live-server-amd64.iso"
 rocky_iso           = "Rocky-9.4-x86_64-dvd.iso"
 
 # -----------------------------------------------------------------------
-# New NAS / documentation infrastructure
+# Microsoft Entra Cloud Sync (VM 109) — lightweight hybrid identity agent
 # -----------------------------------------------------------------------
+# Alternative to Entra Connect Sync (enable_aadconnect, VM 106). Cloud Sync
+# uses a lightweight provisioning agent configured from the Entra portal.
+# Requires internet access. You may run both VM 106 and VM 109 to compare.
+enable_cloudsync = false
+
+# -----------------------------------------------------------------------
+# Two-tier PKI (VMs 112 + 113) — offline Root CA + Enterprise Issuing CA
+# -----------------------------------------------------------------------
+# The realistic enterprise PKI design. VM 112 is an offline standalone Root
+# CA (workgroup); VM 113 is the domain-joined Enterprise Issuing CA.
+# Do NOT enable both enable_ca (single-tier, VM 104) and enable_twotier_pki.
+enable_twotier_pki = false
+
+# -----------------------------------------------------------------------
+# NAS / Documentation infrastructure
+# -----------------------------------------------------------------------
+# VM 120 – lab-nas01: TrueNAS SCALE storage VM.
+# Download TrueNAS SCALE ISO from https://www.truenas.com/download-truenas-scale/
 enable_nas         = false
 truenas_iso        = "TrueNAS-SCALE-24.10.2.iso"
 nas_data_disk_size = 500
 
+# VM 127 – lab-docusaurus01: Dedicated Docusaurus documentation VM.
 enable_docusaurus = false
-
-# Future consolidated project stacks (no VM resource yet)
-enable_ai_mcp_stack          = false
-enable_observability_stack   = false
-enable_wazuh_siem            = false
-enable_backup_dr             = false
-enable_proxmox_backup_server = false
-enable_devops_automation     = false
-enable_dns_filter            = false

@@ -19,9 +19,10 @@
 #   ansible-playbook -i inventory/lab.yml playbooks/site.yml \
 #       --limit dc,sccm,clients_win
 #
-# NOTE: Optional host groups (ca, dc02, aadconnect, clients_linux) are
-# commented out in the default lab.yml inventory. If you have not
-# uncommented them, those plays run against zero hosts and make no changes.
+# NOTE: Optional host groups (ca, dc02, rootca, subca, aadconnect,
+# cloudsync, clients_linux) are commented out in the default lab.yml
+# inventory. If you have not uncommented them, those plays run against zero
+# hosts and make no changes.
 # =======================================================================
 
 # 1. Primary DC — must run first: creates AD, DNS and DHCP for the domain
@@ -31,19 +32,31 @@
 #    Requires DC to be promoted so the CA can join the domain
 - ansible.builtin.import_playbook: ca.yml
 
-# 3. Secondary DC — optional (enable_dc02 = true)
+# 3. Two-tier PKI: Offline Standalone Root CA — optional (enable_twotier_pki = true)
+#    Installs the offline root and exports its cert/CRL for the sub-CA
+- ansible.builtin.import_playbook: pki-root.yml
+
+# 4. Two-tier PKI: Enterprise Subordinate / Issuing CA — optional (enable_twotier_pki = true)
+#    Requires the DC (domain join) and the root CA to have issued its cert
+- ansible.builtin.import_playbook: pki-sub.yml
+
+# 5. Secondary DC — optional (enable_dc02 = true)
 #    Replicates AD from lab-dc01 once the domain exists
 - ansible.builtin.import_playbook: dc02.yml
 
-# 4. SCCM prerequisites — requires the domain to be up for domain join
+# 6. SCCM prerequisites — requires the domain to be up for domain join
 - ansible.builtin.import_playbook: sccm.yml
 
-# 5. Azure AD Connect — optional (enable_aadconnect = true)
+# 7. Azure AD Connect — optional (enable_aadconnect = true)
 #    Requires domain and internet connectivity for Entra ID sync
 - ansible.builtin.import_playbook: aadconnect.yml
 
-# 6. Windows 11 clients — domain join and SCCM client push preparation
+# 8. Entra Cloud Sync — optional (enable_cloudsync = true)
+#    Requires domain and internet connectivity for the provisioning agent
+- ansible.builtin.import_playbook: cloudsync.yml
+
+# 9. Windows 11 clients — domain join and SCCM client push preparation
 - ansible.builtin.import_playbook: client-windows.yml
 
-# 7. Linux clients — optional (enable_linux_client = true)
+# 10. Linux clients — optional (enable_linux_client = true)
 - ansible.builtin.import_playbook: client-linux.yml
